@@ -169,6 +169,7 @@ static void early_suspend(struct work_struct *work)
 /*KERNEL-SC-SUSPEND_RESUME_WAKELOCK_LOG-01+] */
 	}
 	mutex_unlock(&early_suspend_lock);
+
 /*KERNEL-SC-SUSPEND_RESUME_WAKELOCK_LOG-01+[ */
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("[PM]early_suspend: sync\n");

@@ -295,6 +295,9 @@ config SND_SOC_CS8427
 config SND_SOC_WCD9320
         tristate
 
+config SND_SOC_WCD9306
+        tristate
+
 config SND_SOC_WL1273
 	tristate
 
@@ -447,4 +450,7 @@ config SND_SOC_TPA6130A2
 	tristate
 
 config SND_SOC_MSM_STUB
+	tristate
+
+config SND_SOC_MSM_HDMI_CODEC_RX
 	tristate

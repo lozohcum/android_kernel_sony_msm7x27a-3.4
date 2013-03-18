@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,10 +13,19 @@
 #define __QDSP6VOICE_H__
 
 #include <mach/qdsp6v2/apr.h>
-#include <linux/ion.h>
+#include <linux/msm_ion.h>
 
 #define MAX_VOC_PKT_SIZE 642
 #define SESSION_NAME_LEN 20
+#define NUM_OF_MEMORY_BLOCKS 1
+#define NUM_OF_BUFFERS 2
+/*
+ * BUFFER BLOCK SIZE based on
+ * the supported page size
+ */
+#define BUFFER_BLOCK_SIZE       4096
+
+#define MAX_COL_INFO_SIZE	324
 
 #define VOC_REC_UPLINK		0x00
 #define VOC_REC_DOWNLINK	0x01
@@ -58,6 +67,28 @@ enum {
 	VOC_RUN,
 	VOC_CHANGE,
 	VOC_RELEASE,
+	VOC_ERROR,
+	VOC_STANDBY,
+};
+
+struct mem_buffer {
+	dma_addr_t		phys;
+	void			*data;
+	uint32_t		size; /* size of buffer */
+};
+
+struct share_mem_buf {
+	struct ion_handle	*handle;
+	struct ion_client	*client;
+	struct mem_buffer	buf[NUM_OF_BUFFERS];
+};
+
+struct mem_map_table {
+	dma_addr_t		phys;
+	void			*data;
+	uint32_t		size; /* size of buffer */
+	struct ion_handle	*handle;
+	struct ion_client	*client;
 };
 
 /* Common */
@@ -141,6 +172,9 @@ struct vss_unmap_memory_cmd {
 #define VSS_IMVM_CMD_START_VOICE			0x00011190
 /**< No payload. Wait for APRV2_IBASIC_RSP_RESULT response. */
 
+#define VSS_IMVM_CMD_STANDBY_VOICE                       0x00011191
+/**< No payload. Wait for APRV2_IBASIC_RSP_RESULT response. */
+
 #define VSS_IMVM_CMD_STOP_VOICE				0x00011192
 /**< No payload. Wait for APRV2_IBASIC_RSP_RESULT response. */
 
@@ -162,6 +196,12 @@ struct vss_unmap_memory_cmd {
 
 #define VSS_IWIDEVOICE_CMD_SET_WIDEVOICE                0x00011243
 /* Enable/disable WideVoice */
+
+#define VSS_IMEMORY_CMD_MAP_PHYSICAL			0x00011334
+#define VSS_IMEMORY_RSP_MAP				0x00011336
+#define VSS_IMEMORY_CMD_UNMAP				0x00011337
+#define VSS_IMVM_CMD_SET_CAL_NETWORK			0x0001137A
+#define VSS_IMVM_CMD_SET_CAL_MEDIA_TYPE		0x0001137B
 
 enum msm_audio_voc_rate {
 		VOC_0_RATE, /* Blank frame */
@@ -309,6 +349,92 @@ struct mvm_set_widevoice_enable_cmd {
 	struct vss_iwidevoice_cmd_set_widevoice_t vss_set_wv;
 } __packed;
 
+struct vss_imemory_table_descriptor_t {
+	uint64_t mem_address;
+	/*
+	 * Base physical address of the table. The address must be aligned
+	 * to LCM( cache_line_size, page_align, max_data_width ), where the
+	 * attributes are specified in #VSS_IMEMORY_CMD_MAP_PHYSICAL, and
+	 * LCM = Least Common Multiple. The table at the address must have
+	 * the format specified by #vss_imemory_table_t.
+	 */
+	uint32_t mem_size;
+	/* Size in bytes of the table. */
+} __packed;
+
+struct vss_imemory_block_t {
+	uint64_t mem_address;
+	/*
+	 * Base address of the memory block. The address is virtual for virtual
+	 * memory and physical for physical memory. The address must be aligned
+	 * to LCM( cache_line_size, page_align, max_data_width ), where the
+	 * attributes are specified in VSS_IMEMORY_CMD_MAP_VIRTUAL or
+	 * VSS_IMEMORY_CMD_MAP_PHYSICAL, and LCM = Least Common Multiple.
+	 */
+	uint32_t mem_size;
+	/*
+	 * Size in bytes of the memory block. The size must be multiple of
+	 * page_align, where page_align is specified in
+	 * VSS_IMEMORY_CMD_MAP_VIRTUAL or #VSS_IMEMORY_CMD_MAP_PHYSICAL.
+	 */
+} __packed;
+
+struct vss_imemory_table_t {
+	struct vss_imemory_table_descriptor_t next_table_descriptor;
+	/*
+	 * Specifies the next table. If there is no next table,
+	 * set the size of the table to 0 and the table address is ignored.
+	 */
+	struct vss_imemory_block_t blocks[NUM_OF_MEMORY_BLOCKS];
+	/* Specifies one ore more memory blocks. */
+} __packed;
+
+struct vss_imemory_cmd_map_physical_t {
+	struct apr_hdr hdr;
+	struct vss_imemory_table_descriptor_t table_descriptor;
+	bool is_cached;
+	/*
+	 * Indicates cached or uncached memory. Supported values:
+	 * TRUE - Cached.
+	 */
+	uint16_t cache_line_size;
+	/* Cache line size in bytes. Supported values: 128 */
+	uint32_t access_mask;
+	/*
+	 * CVD's access permission to the memory while it is mapped.
+	 * Supported values:
+	 * bit 0 - If set, the memory is readable.
+	 * bit 1 - If set, the memory is writable.
+	 */
+	uint32_t page_align;
+	/* Page frame alignment in bytes. Supported values: 4096 */
+	uint8_t min_data_width;
+	/*
+	 * Minimum native data type width in bits that can be accessed.
+	 * Supported values: 8
+	 */
+	uint8_t max_data_width;
+	/*
+	 * Maximum native data type width in bits that can be accessed.
+	 * Supported values: 64
+	 */
+} __packed;
+
+struct vss_imvm_cmd_set_cal_network_t {
+	struct apr_hdr hdr;
+	uint32_t network_id;
+} __packed;
+
+struct vss_imvm_cmd_set_cal_media_type_t {
+	struct apr_hdr hdr;
+	uint32_t media_id;
+} __packed;
+
+struct vss_imemory_cmd_unmap_t {
+	struct apr_hdr hdr;
+	uint32_t mem_handle;
+} __packed;
+
 /* TO CVS commands */
 #define VSS_ISTREAM_CMD_CREATE_PASSIVE_CONTROL_SESSION	0x00011140
 /**< Wait for APRV2_IBASIC_RSP_RESULT response. */
@@ -318,9 +444,13 @@ struct mvm_set_widevoice_enable_cmd {
 
 #define APRV2_IBASIC_CMD_DESTROY_SESSION		0x0001003C
 
-#define VSS_ISTREAM_CMD_SET_MUTE			0x00011022
+/*
+ * This command changes the mute setting. The new mute setting will
+ * be applied over the specified ramp duration.
+ */
+#define VSS_IVOLUME_CMD_MUTE_V2				0x0001138B
 
-#define VSS_ISTREAM_CMD_REGISTER_CALIBRATION_DATA	0x00011279
+#define VSS_ISTREAM_CMD_REGISTER_CALIBRATION_DATA_V2    0x00011369
 
 #define VSS_ISTREAM_CMD_DEREGISTER_CALIBRATION_DATA     0x0001127A
 
@@ -334,6 +464,8 @@ struct mvm_set_widevoice_enable_cmd {
 /* Event sent by the stream to its client requesting for a decoder packet.
  * The client should respond with a VSS_ISTREAM_EVT_SEND_DEC_BUFFER event.
  */
+
+#define VSS_ISTREAM_EVT_OOB_NOTIFY_DEC_BUFFER_REQUEST	0x0001136E
 
 #define VSS_ISTREAM_EVT_SEND_DEC_BUFFER			0x00011016
 /* Event sent by the client to the stream in response to a
@@ -363,27 +495,73 @@ struct mvm_set_widevoice_enable_cmd {
 #define VSS_ISTREAM_CMD_STOP_PLAYBACK                   0x00011239
 /* Stop the in-call music delivery on the Tx voice path. */
 
-#define VSS_ISTREAM_CMD_START_RECORD                    0x00011236
+#define VSS_IRECORD_CMD_START				0x000112BE
 /* Start in-call conversation recording. */
-#define VSS_ISTREAM_CMD_STOP_RECORD                     0x00011237
+#define VSS_IRECORD_CMD_STOP				0x00011237
 /* Stop in-call conversation recording. */
 
-#define VSS_TAP_POINT_NONE                              0x00010F78
+#define VSS_IRECORD_PORT_ID_DEFAULT			0x0000FFFF
+/* Default AFE port ID. */
+
+#define VSS_IRECORD_TAP_POINT_NONE			0x00010F78
 /* Indicates no tapping for specified path. */
 
-#define VSS_TAP_POINT_STREAM_END                        0x00010F79
+#define VSS_IRECORD_TAP_POINT_STREAM_END		0x00010F79
 /* Indicates that specified path should be tapped at the end of the stream. */
 
-struct vss_istream_cmd_start_record_t {
+#define VSS_IRECORD_MODE_TX_RX_STEREO			0x00010F7A
+/* Select Tx on left channel and Rx on right channel. */
+
+#define VSS_IRECORD_MODE_TX_RX_MIXING			0x00010F7B
+/* Select mixed Tx and Rx paths. */
+
+#define VSS_ISTREAM_EVT_NOT_READY			0x000110FD
+
+#define VSS_ISTREAM_EVT_READY				0x000110FC
+
+#define VSS_ISTREAM_EVT_OOB_NOTIFY_DEC_BUFFER_READY	0x0001136F
+/*notify dsp that decoder buffer is ready*/
+
+#define VSS_ISTREAM_EVT_OOB_NOTIFY_ENC_BUFFER_READY	0x0001136C
+/*dsp notifying client that encoder buffer is ready*/
+
+#define VSS_ISTREAM_EVT_OOB_NOTIFY_ENC_BUFFER_CONSUMED	0x0001136D
+/*notify dsp that encoder buffer is consumed*/
+
+#define VSS_ISTREAM_CMD_SET_OOB_PACKET_EXCHANGE_CONFIG	0x0001136B
+
+#define VSS_ISTREAM_PACKET_EXCHANGE_MODE_INBAND	0
+/* In-band packet exchange mode. */
+
+#define VSS_ISTREAM_PACKET_EXCHANGE_MODE_OUT_OF_BAND	1
+/* Out-of-band packet exchange mode. */
+
+#define VSS_ISTREAM_CMD_SET_PACKET_EXCHANGE_MODE	0x0001136A
+
+struct vss_irecord_cmd_start_t {
 	uint32_t rx_tap_point;
 	/* Tap point to use on the Rx path. Supported values are:
-	 * VSS_TAP_POINT_NONE : Do not record Rx path.
-	 * VSS_TAP_POINT_STREAM_END : Rx tap point is at the end of the stream.
+	 * VSS_IRECORD_TAP_POINT_NONE : Do not record Rx path.
+	 * VSS_IRECORD_TAP_POINT_STREAM_END : Rx tap point is at the end of
+	 * the stream.
 	 */
 	uint32_t tx_tap_point;
 	/* Tap point to use on the Tx path. Supported values are:
-	 * VSS_TAP_POINT_NONE : Do not record tx path.
-	 * VSS_TAP_POINT_STREAM_END : Tx tap point is at the end of the stream.
+	 * VSS_IRECORD_TAP_POINT_NONE : Do not record tx path.
+	 * VSS_IRECORD_TAP_POINT_STREAM_END : Tx tap point is at the end of
+	 * the stream.
+	 */
+	uint16_t port_id;
+	/* AFE Port ID to whcih the conversation recording stream needs to be
+	 * sent. Set this to #VSS_IRECORD_PORT_ID_DEFAULT to use default AFE
+	 * pseudo ports (0x8003 for Rx and 0x8004 for Tx).
+	 */
+	uint32_t mode;
+	/* Recording Mode. The mode parameter value is ignored if the port_id
+	 * is set to #VSS_IRECORD_PORT_ID_DEFAULT.
+	 * The supported values:
+	 * #VSS_IRECORD_MODE_TX_RX_STEREO
+	 * #VSS_IRECORD_MODE_TX_RX_MIXING
 	 */
 } __packed;
 
@@ -397,22 +575,33 @@ struct vss_istream_cmd_create_passive_control_session_t {
 	*/
 } __packed;
 
-struct vss_istream_cmd_set_mute_t {
+#define VSS_IVOLUME_DIRECTION_TX	0
+#define VSS_IVOLUME_DIRECTION_RX	1
+
+#define VSS_IVOLUME_MUTE_OFF		0
+#define VSS_IVOLUME_MUTE_ON		1
+
+#define DEFAULT_MUTE_RAMP_DURATION	500
+
+struct vss_ivolume_cmd_mute_v2_t {
 	uint16_t direction;
-	/**<
-	* 0 : TX only
-	* 1 : RX only
-	* 2 : TX and Rx
-	*/
+	/*
+	 * The direction field sets the direction to apply the mute command.
+	 * The Supported values:
+	 * VSS_IVOLUME_DIRECTION_TX
+	 * VSS_IVOLUME_DIRECTION_RX
+	 */
 	uint16_t mute_flag;
-	/**<
-	* Mute, un-mute.
-	*
-	* 0 : Silence disable
-	* 1 : Silence enable
-	* 2 : CNG enable. Applicable to TX only. If set on RX behavior
-	*     will be the same as 1
-	*/
+	/*
+	 * Turn mute on or off. The Supported values:
+	 * VSS_IVOLUME_MUTE_OFF
+	 * VSS_IVOLUME_MUTE_ON
+	 */
+	uint16_t ramp_duration_ms;
+	/*
+	 * Mute change ramp duration in milliseconds.
+	 * The Supported values: 0 to 5000.
+	 */
 } __packed;
 
 struct vss_istream_cmd_create_full_control_session_t {
@@ -522,14 +711,21 @@ struct vss_istream_cmd_set_enc_dtx_mode_t {
 	 */
 } __packed;
 
-struct vss_istream_cmd_register_calibration_data_t {
-	uint32_t phys_addr;
-	/* Phsical address to be registered with stream. The calibration data
-	 *  is stored at this address.
-	 */
-	uint32_t mem_size;
+struct vss_istream_cmd_register_calibration_data_v2_t {
+	uint32_t cal_mem_handle;
+	/* Handle to the shared memory that holds the calibration data. */
+	uint64_t cal_mem_address;
+	/* Location of calibration data. */
+	uint32_t cal_mem_size;
 	/* Size of the calibration data in bytes. */
-};
+	uint8_t column_info[MAX_COL_INFO_SIZE];
+	/*
+	 * Column info contains the number of columns and the array of columns
+	 * in the calibration table. The order in which the columns are provided
+	 * here must match the order in which they exist in the calibration
+	 * table provided.
+	 */
+} __packed;
 
 struct vss_icommon_cmd_set_ui_property_enable_t {
 	uint32_t module_id;
@@ -561,7 +757,7 @@ struct cvs_destroy_session_cmd {
 
 struct cvs_set_mute_cmd {
 	struct apr_hdr hdr;
-	struct vss_istream_cmd_set_mute_t cvs_set_mute;
+	struct vss_ivolume_cmd_mute_v2_t cvs_set_mute;
 } __packed;
 
 struct cvs_set_media_type_cmd {
@@ -596,7 +792,7 @@ struct cvs_set_enc_dtx_mode_cmd {
 
 struct cvs_register_cal_data_cmd {
 	struct apr_hdr hdr;
-	struct vss_istream_cmd_register_calibration_data_t cvs_cal_data;
+	struct vss_istream_cmd_register_calibration_data_v2_t cvs_cal_data;
 } __packed;
 
 struct cvs_deregister_cal_data_cmd {
@@ -609,7 +805,29 @@ struct cvs_set_pp_enable_cmd {
 } __packed;
 struct cvs_start_record_cmd {
 	struct apr_hdr hdr;
-	struct vss_istream_cmd_start_record_t rec_mode;
+	struct vss_irecord_cmd_start_t rec_mode;
+} __packed;
+
+struct cvs_dec_buffer_ready_cmd {
+	struct apr_hdr hdr;
+} __packed;
+
+struct cvs_enc_buffer_consumed_cmd {
+	struct apr_hdr hdr;
+} __packed;
+
+struct vss_istream_cmd_set_oob_packet_exchange_config_t {
+	struct apr_hdr hdr;
+	uint32_t mem_handle;
+	uint64_t enc_buf_addr;
+	uint32_t enc_buf_size;
+	uint64_t dec_buf_addr;
+	uint32_t dec_buf_size;
+} __packed;
+
+struct vss_istream_cmd_set_packet_exchange_mode_t {
+	struct apr_hdr hdr;
+	uint32_t mode;
 } __packed;
 
 /* TO CVP commands */
@@ -631,11 +849,24 @@ struct cvs_start_record_cmd {
 #define VSS_IVOCPROC_CMD_DISABLE			0x000110E1
 /**< No payload. Wait for APRV2_IBASIC_RSP_RESULT response. */
 
-#define VSS_IVOCPROC_CMD_REGISTER_CALIBRATION_DATA	0x00011275
-#define VSS_IVOCPROC_CMD_DEREGISTER_CALIBRATION_DATA    0x00011276
+/*
+ * Registers the memory that contains device specific configuration data with
+ * the vocproc. The client must register device configuration data with the
+ * vocproc that corresponds with the device being set on the vocproc.
+ */
+#define VSS_IVOCPROC_CMD_REGISTER_DEVICE_CONFIG		0x00011371
 
-#define VSS_IVOCPROC_CMD_REGISTER_VOLUME_CAL_TABLE      0x00011277
-#define VSS_IVOCPROC_CMD_DEREGISTER_VOLUME_CAL_TABLE    0x00011278
+/*
+ * Deregisters the memory that holds device configuration data from the
+  vocproc.
+*/
+#define VSS_IVOCPROC_CMD_DEREGISTER_DEVICE_CONFIG	0x00011372
+
+#define VSS_IVOCPROC_CMD_REGISTER_CALIBRATION_DATA_V2	0x00011373
+#define VSS_IVOCPROC_CMD_DEREGISTER_CALIBRATION_DATA	0x00011276
+
+#define VSS_IVOCPROC_CMD_REGISTER_VOL_CALIBRATION_DATA	0x00011374
+#define VSS_IVOCPROC_CMD_DEREGISTER_VOL_CALIBRATION_DATA	0x00011375
 
 #define VSS_IVOCPROC_TOPOLOGY_ID_NONE			0x00010F70
 #define VSS_IVOCPROC_TOPOLOGY_ID_TX_SM_ECNS		0x00010F71
@@ -644,6 +875,17 @@ struct cvs_start_record_cmd {
 #define VSS_IVOCPROC_TOPOLOGY_ID_RX_DEFAULT		0x00010F77
 
 /* Newtwork IDs */
+#define VSS_ICOMMON_CAL_NETWORK_ID_NONE		0x0001135E
+
+/* Select internal mixing mode. */
+#define VSS_IVOCPROC_VOCPROC_MODE_EC_INT_MIXING	0x00010F7C
+
+/* Select external mixing mode. */
+#define VSS_IVOCPROC_VOCPROC_MODE_EC_EXT_MIXING	0x00010F7D
+
+/* Default AFE port ID. Applicable to Tx and Rx. */
+#define VSS_IVOCPROC_PORT_ID_NONE			0xFFFF
+
 #define VSS_NETWORK_ID_DEFAULT				0x00010037
 #define VSS_NETWORK_ID_VOIP_NB				0x00011240
 #define VSS_NETWORK_ID_VOIP_WB				0x00011241
@@ -670,119 +912,147 @@ struct cvs_start_record_cmd {
 #define VSS_MEDIA_ID_4GV_WB_MODEM	0x00010FC4
 /*CDMA EVRC-WB vocoder modem format */
 
-#define VSS_IVOCPROC_CMD_SET_MUTE			0x000110EF
+#define VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2	0x000112BF
 
-#define VOICE_CMD_SET_PARAM				0x00011006
-#define VOICE_CMD_GET_PARAM				0x00011007
-#define VOICE_EVT_GET_PARAM_ACK				0x00011008
-
-struct vss_ivocproc_cmd_create_full_control_session_t {
+struct vss_ivocproc_cmd_create_full_control_session_v2_t {
 	uint16_t direction;
 	/*
-	 * stream direction.
-	 * 0 : TX only
-	 * 1 : RX only
-	 * 2 : TX and RX
+	 * Vocproc direction. The supported values:
+	 * VSS_IVOCPROC_DIRECTION_RX
+	 * VSS_IVOCPROC_DIRECTION_TX
+	 * VSS_IVOCPROC_DIRECTION_RX_TX
 	 */
-	uint32_t tx_port_id;
+	uint16_t tx_port_id;
 	/*
-	 * TX device port ID which vocproc will connect to. If not supplying a
-	 * port ID set to VSS_IVOCPROC_PORT_ID_NONE.
+	 * Tx device port ID to which the vocproc connects. If a port ID is
+	 * not being supplied, set this to #VSS_IVOCPROC_PORT_ID_NONE.
 	 */
 	uint32_t tx_topology_id;
 	/*
-	 * Tx leg topology ID. If not supplying a topology ID set to
-	 * VSS_IVOCPROC_TOPOLOGY_ID_NONE.
+	 * Tx path topology ID. If a topology ID is not being supplied, set
+	 * this to #VSS_IVOCPROC_TOPOLOGY_ID_NONE.
 	 */
-	uint32_t rx_port_id;
+	uint16_t rx_port_id;
 	/*
-	 * RX device port ID which vocproc will connect to. If not supplying a
-	 * port ID set to VSS_IVOCPROC_PORT_ID_NONE.
+	 * Rx device port ID to which the vocproc connects. If a port ID is
+	 * not being supplied, set this to #VSS_IVOCPROC_PORT_ID_NONE.
 	 */
 	uint32_t rx_topology_id;
 	/*
-	 * Rx leg topology ID. If not supplying a topology ID set to
-	 * VSS_IVOCPROC_TOPOLOGY_ID_NONE.
+	 * Rx path topology ID. If a topology ID is not being supplied, set
+	 * this to #VSS_IVOCPROC_TOPOLOGY_ID_NONE.
 	 */
-	int32_t network_id;
+	uint32_t profile_id;
+	/* Voice calibration profile ID. */
+	uint32_t vocproc_mode;
 	/*
-	 * Network ID. (Refer to VSS_NETWORK_ID_XXX). If not supplying a network
-	 * ID set to VSS_NETWORK_ID_DEFAULT.
+	 * Vocproc mode. The supported values:
+	 * VSS_IVOCPROC_VOCPROC_MODE_EC_INT_MIXING
+	 * VSS_IVOCPROC_VOCPROC_MODE_EC_EXT_MIXING
+	 */
+	uint16_t ec_ref_port_id;
+	/*
+	 * Port ID to which the vocproc connects for receiving echo
+	 * cancellation reference signal. If a port ID is not being supplied,
+	 * set this to #VSS_IVOCPROC_PORT_ID_NONE. This parameter value is
+	 * ignored when the vocproc_mode parameter is set to
+	 * VSS_IVOCPROC_VOCPROC_MODE_EC_INT_MIXING.
+	 */
+	char name[SESSION_NAME_LEN];
+	/*
+	 * Session name string used to identify a session that can be shared
+	 * with passive controllers (optional). The string size, including the
+	 * NULL termination character, is limited to 31 characters.
 	 */
 } __packed;
 
 struct vss_ivocproc_cmd_set_volume_index_t {
 	uint16_t vol_index;
-	/**<
-	* Volume index utilized by the vocproc to index into the volume table
-	* provided in VSS_IVOCPROC_CMD_CACHE_VOLUME_CALIBRATION_TABLE and set
-	* volume on the VDSP.
-	*/
+	/*
+	 * Volume index utilized by the vocproc to index into the volume table
+	 * provided in VSS_IVOCPROC_CMD_CACHE_VOLUME_CALIBRATION_TABLE and set
+	 * volume on the VDSP.
+	 */
 } __packed;
 
 struct vss_ivocproc_cmd_set_device_t {
 	uint32_t tx_port_id;
-	/**<
-	* TX device port ID which vocproc will connect to.
-	* VSS_IVOCPROC_PORT_ID_NONE means vocproc will not connect to any port.
-	*/
+	/*
+	 * TX device port ID which vocproc will connect to.
+	 * VSS_IVOCPROC_PORT_ID_NONE means vocproc will not connect to any port.
+	 */
 	uint32_t tx_topology_id;
-	/**<
-	* TX leg topology ID.
-	* VSS_IVOCPROC_TOPOLOGY_ID_NONE means vocproc does not contain any
-	* pre/post-processing blocks and is pass-through.
-	*/
+	/*
+	 * TX leg topology ID.
+	 * VSS_IVOCPROC_TOPOLOGY_ID_NONE means vocproc does not contain any
+	 * pre/post-processing blocks and is pass-through.
+	 */
 	int32_t rx_port_id;
-	/**<
-	* RX device port ID which vocproc will connect to.
-	* VSS_IVOCPROC_PORT_ID_NONE means vocproc will not connect to any port.
-	*/
+	/*
+	 * RX device port ID which vocproc will connect to.
+	 * VSS_IVOCPROC_PORT_ID_NONE means vocproc will not connect to any port.
+	 */
 	uint32_t rx_topology_id;
-	/**<
-	* RX leg topology ID.
-	* VSS_IVOCPROC_TOPOLOGY_ID_NONE means vocproc does not contain any
-	* pre/post-processing blocks and is pass-through.
-	*/
+	/*
+	 * RX leg topology ID.
+	 * VSS_IVOCPROC_TOPOLOGY_ID_NONE means vocproc does not contain any
+	 * pre/post-processing blocks and is pass-through.
+	 */
 } __packed;
 
-struct vss_ivocproc_cmd_register_calibration_data_t {
-	uint32_t phys_addr;
-	/* Phsical address to be registered with vocproc. Calibration data
-	 *  is stored at this address.
+struct vss_ivocproc_cmd_register_device_config_t {
+	uint32_t mem_handle;
+	/*
+	 * Handle to the shared memory that holds the per-network calibration
+	 * data.
 	 */
+	uint64_t mem_address;
+	/* Location of calibration data. */
 	uint32_t mem_size;
 	/* Size of the calibration data in bytes. */
 } __packed;
 
-struct vss_ivocproc_cmd_register_volume_cal_table_t {
-	uint32_t phys_addr;
-	/* Phsical address to be registered with the vocproc. The volume
-	 *  calibration table is stored at this location.
+struct vss_ivocproc_cmd_register_calibration_data_v2_t {
+	uint32_t cal_mem_handle;
+	/*
+	 * Handle to the shared memory that holds the per-network calibration
+	 * data.
 	 */
-
-	uint32_t mem_size;
-	/* Size of the volume calibration table in bytes. */
+	uint64_t cal_mem_address;
+	/* Location of calibration data. */
+	uint32_t cal_mem_size;
+	/* Size of the calibration data in bytes. */
+	uint8_t column_info[MAX_COL_INFO_SIZE];
+	/*
+	 * Column info contains the number of columns and the array of columns
+	 * in the calibration table. The order in which the columns are provided
+	 * here must match the order in which they exist in the calibration
+	 * table provided.
+	 */
 } __packed;
 
-struct vss_ivocproc_cmd_set_mute_t {
-	uint16_t direction;
+struct vss_ivocproc_cmd_register_volume_cal_data_t {
+	uint32_t cal_mem_handle;
 	/*
-	* 0 : TX only.
-	* 1 : RX only.
-	* 2 : TX and Rx.
-	*/
-	uint16_t mute_flag;
+	 * Handle to the shared memory that holds the volume calibration
+	 * data.
+	 */
+	uint64_t cal_mem_address;
+	/* Location of volume calibration data. */
+	uint32_t cal_mem_size;
+	/* Size of the volume calibration data in bytes. */
+	uint8_t column_info[MAX_COL_INFO_SIZE];
 	/*
-	* Mute, un-mute.
-	*
-	* 0 : Disable.
-	* 1 : Enable.
-	*/
+	 * Column info contains the number of columns and the array of columns
+	 * in the calibration table. The order in which the columns are provided
+	 * here must match the order in which they exist in the calibration
+	 * table provided.
+	 */
 } __packed;
 
 struct cvp_create_full_ctl_session_cmd {
 	struct apr_hdr hdr;
-	struct vss_ivocproc_cmd_create_full_control_session_t cvp_session;
+	struct vss_ivocproc_cmd_create_full_control_session_v2_t cvp_session;
 } __packed;
 
 struct cvp_command {
@@ -803,27 +1073,36 @@ struct cvp_set_rx_volume_index_cmd {
 	struct vss_ivocproc_cmd_set_volume_index_t cvp_set_vol_idx;
 } __packed;
 
+struct cvp_register_dev_cfg_cmd {
+	struct apr_hdr hdr;
+	struct vss_ivocproc_cmd_register_device_config_t cvp_dev_cfg_data;
+} __packed;
+
+struct cvp_deregister_dev_cfg_cmd {
+	struct apr_hdr hdr;
+} __packed;
+
 struct cvp_register_cal_data_cmd {
 	struct apr_hdr hdr;
-	struct vss_ivocproc_cmd_register_calibration_data_t cvp_cal_data;
+	struct vss_ivocproc_cmd_register_calibration_data_v2_t cvp_cal_data;
 } __packed;
 
 struct cvp_deregister_cal_data_cmd {
 	struct apr_hdr hdr;
 } __packed;
 
-struct cvp_register_vol_cal_table_cmd {
+struct cvp_register_vol_cal_data_cmd {
 	struct apr_hdr hdr;
-	struct vss_ivocproc_cmd_register_volume_cal_table_t cvp_vol_cal_tbl;
+	struct vss_ivocproc_cmd_register_volume_cal_data_t cvp_vol_cal_data;
 } __packed;
 
-struct cvp_deregister_vol_cal_table_cmd {
+struct cvp_deregister_vol_cal_data_cmd {
 	struct apr_hdr hdr;
 } __packed;
 
 struct cvp_set_mute_cmd {
 	struct apr_hdr hdr;
-	struct vss_ivocproc_cmd_set_mute_t cvp_set_mute;
+	struct vss_ivolume_cmd_mute_v2_t cvp_set_mute;
 } __packed;
 
 /* CB for up-link packets. */
@@ -833,7 +1112,6 @@ typedef void (*ul_cb_fn)(uint8_t *voc_pkt,
 
 /* CB for down-link packets. */
 typedef void (*dl_cb_fn)(uint8_t *voc_pkt,
-			 uint32_t *pkt_len,
 			 void *private_data);
 
 
@@ -860,8 +1138,17 @@ struct incall_music_info {
 	int force;
 };
 
+struct share_memory_info {
+	u32			mem_handle;
+	struct share_mem_buf	sh_buf;
+	struct mem_map_table	memtbl;
+};
+
 struct voice_data {
 	int voc_state;/*INIT, CHANGE, RELEASE, RUN */
+
+	/* Shared mem to store decoder and encoder packets */
+	struct share_memory_info	shmem_info;
 
 	wait_queue_head_t mvm_wait;
 	wait_queue_head_t cvs_wait;
@@ -926,7 +1213,8 @@ struct common_data {
 	/* APR to CVP in the Q6 */
 	void *apr_q6_cvp;
 
-	struct ion_client *client;
+	struct mem_map_table cal_mem_map_table;
+	uint32_t cal_mem_handle;
 	struct cal_mem cvp_cal;
 	struct cal_mem cvs_cal;
 
@@ -957,7 +1245,8 @@ enum {
 };
 
 /* called  by alsa driver */
-int voc_set_pp_enable(uint16_t session_id, uint32_t module_id, uint32_t enable);
+int voc_set_pp_enable(uint16_t session_id, uint32_t module_id,
+		      uint32_t enable);
 int voc_get_pp_enable(uint16_t session_id, uint32_t module_id);
 int voc_set_widevoice_enable(uint16_t session_id, uint32_t wv_enable);
 uint32_t voc_get_widevoice_enable(uint16_t session_id);
@@ -965,6 +1254,8 @@ uint8_t voc_get_tty_mode(uint16_t session_id);
 int voc_set_tty_mode(uint16_t session_id, uint8_t tty_mode);
 int voc_start_voice_call(uint16_t session_id);
 int voc_end_voice_call(uint16_t session_id);
+int voc_standby_voice_call(uint16_t session_id);
+int voc_resume_voice_call(uint16_t session_id);
 int voc_set_rxtx_port(uint16_t session_id,
 		      uint32_t dev_port_id,
 		      uint32_t dev_type);

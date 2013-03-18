@@ -50,6 +50,7 @@ module_param_named(debug_mask, debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP);
 #define WAKE_LOCK_ACTIVE                 (1U << 9)
 #define WAKE_LOCK_AUTO_EXPIRE            (1U << 10)
 #define WAKE_LOCK_PREVENTING_SUSPEND     (1U << 11)
+
 /*KERNEL-SC-SUSPEND_RESUME_WAKELOCK_LOG-01+[ */
 #define POLLING_DUMP_WAKELOCK_SECS	(45)   /* FIH-SW3-KERNEL-JC-dumpwakelock */
 /*#define IDLE_DUMP_WAKELOCK_COUNT (40)*//*KERNEL-SC-idle-wakelock-00-*/

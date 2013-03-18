@@ -212,8 +212,8 @@ static long madvise_remove(struct vm_area_struct *vma,
 		return -EINVAL;
 
 	f = vma->vm_file;
-	
-	if (!f || !f->f_mapping || !f->f_mapping->host) {		
+
+	if (!f || !f->f_mapping || !f->f_mapping->host) {
 			return -EINVAL;
 	}
 
@@ -227,7 +227,6 @@ static long madvise_remove(struct vm_area_struct *vma,
 	endoff = (loff_t)(end - vma->vm_start - 1)
 			+ ((loff_t)vma->vm_pgoff << PAGE_SHIFT);
 
-	/* vmtruncate_range needs to take i_mutex */
 	/*
 	 * vmtruncate_range may need to take i_mutex.  We need to
 	 * explicitly grab a reference because the vma (and hence the

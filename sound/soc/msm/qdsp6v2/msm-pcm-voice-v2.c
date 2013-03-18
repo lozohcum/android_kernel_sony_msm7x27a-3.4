@@ -33,7 +33,9 @@ static struct msm_voice voice_info[VOICE_SESSION_INDEX_MAX];
 
 static struct snd_pcm_hardware msm_pcm_hardware = {
 
-	.info =                 SNDRV_PCM_INFO_INTERLEAVED,
+	.info =                 (SNDRV_PCM_INFO_INTERLEAVED |
+				SNDRV_PCM_INFO_PAUSE |
+				SNDRV_PCM_INFO_RESUME),
 	.formats =              SNDRV_PCM_FMTBIT_S16_LE,
 	.rates =                SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000,
 	.rate_min =             8000,
@@ -42,10 +44,10 @@ static struct snd_pcm_hardware msm_pcm_hardware = {
 	.channels_max =         1,
 
 	.buffer_bytes_max =     4096 * 2,
-	.period_bytes_min =     4096,
+	.period_bytes_min =     2048,
 	.period_bytes_max =     4096,
 	.periods_min =          2,
-	.periods_max =          2,
+	.periods_max =          4,
 
 	.fifo_size =            0,
 };
@@ -203,6 +205,55 @@ static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
 	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
 
 	return 0;
+}
+
+static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+{
+	int ret = 0;
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct msm_voice *prtd = runtime->private_data;
+	uint16_t session_id = 0;
+
+	pr_debug("%s: cmd = %d\n", __func__, cmd);
+	if (is_volte(prtd))
+		session_id = voc_get_session_id(VOLTE_SESSION_NAME);
+	else
+		session_id = voc_get_session_id(VOICE_SESSION_NAME);
+
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+	case SNDRV_PCM_TRIGGER_STOP:
+		pr_debug("Start & Stop Voice call not handled in Trigger.\n");
+	break;
+	case SNDRV_PCM_TRIGGER_RESUME:
+	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		pr_debug("%s: resume call session_id = %d\n", __func__,
+			 session_id);
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+			ret = msm_pcm_playback_prepare(substream);
+		else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
+			ret = msm_pcm_capture_prepare(substream);
+		if (prtd->playback_start && prtd->capture_start)
+			voc_resume_voice_call(session_id);
+	break;
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+		pr_debug("%s: pause call session_id=%d\n",
+			 __func__, session_id);
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			if (prtd->playback_start)
+				prtd->playback_start = 0;
+		} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+			if (prtd->capture_start)
+				prtd->capture_start = 0;
+		}
+		voc_standby_voice_call(session_id);
+		break;
+	default:
+		ret = -EINVAL;
+	break;
+	}
+	return ret;
 }
 
 static int msm_voice_volume_get(struct snd_kcontrol *kcontrol,
@@ -437,6 +488,7 @@ static struct snd_pcm_ops msm_pcm_ops = {
 	.hw_params	= msm_pcm_hw_params,
 	.close          = msm_pcm_close,
 	.prepare        = msm_pcm_prepare,
+	.trigger	= msm_pcm_trigger,
 };
 
 
@@ -466,6 +518,9 @@ static struct snd_soc_platform_driver msm_soc_platform = {
 
 static __devinit int msm_pcm_probe(struct platform_device *pdev)
 {
+	if (pdev->dev.of_node)
+		dev_set_name(&pdev->dev, "%s", "msm-pcm-voice");
+
 	pr_debug("%s: dev name %s\n", __func__, dev_name(&pdev->dev));
 	return snd_soc_register_platform(&pdev->dev,
 				   &msm_soc_platform);
@@ -477,10 +532,17 @@ static int msm_pcm_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct of_device_id msm_voice_dt_match[] = {
+	{.compatible = "qcom,msm-pcm-voice"},
+	{}
+};
+MODULE_DEVICE_TABLE(of, msm_voice_dt_match);
+
 static struct platform_driver msm_pcm_driver = {
 	.driver = {
 		.name = "msm-pcm-voice",
 		.owner = THIS_MODULE,
+		.of_match_table = msm_voice_dt_match,
 	},
 	.probe = msm_pcm_probe,
 	.remove = __devexit_p(msm_pcm_remove),

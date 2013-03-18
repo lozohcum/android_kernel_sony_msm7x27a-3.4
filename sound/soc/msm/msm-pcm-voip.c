@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -43,6 +43,25 @@
 #define MODE_AMR		0x5
 #define MODE_AMR_WB		0xD
 #define MODE_PCM		0xC
+#define MODE_G711		0xA
+#define MODE_G711A		0xF
+
+enum msm_audio_g711a_frame_type {
+	MVS_G711A_SPEECH_GOOD,
+	MVS_G711A_SID,
+	MVS_G711A_NO_DATA,
+	MVS_G711A_ERASURE
+};
+
+enum msm_audio_g711a_mode {
+	MVS_G711A_MODE_MULAW,
+	MVS_G711A_MODE_ALAW
+};
+
+enum msm_audio_g711_mode {
+	MVS_G711_MODE_MULAW,
+	MVS_G711_MODE_ALAW
+};
 
 enum format {
 	FORMAT_S16_LE = 2,
@@ -135,7 +154,7 @@ struct voip_drv_info {
 	unsigned int pcm_capture_buf_pos;       /* position in buffer */
 };
 
-static int voip_get_media_type(uint32_t mode,
+static int voip_get_media_type(uint32_t mode, uint32_t rate_type,
 				unsigned int samp_rate);
 static int voip_get_rate_type(uint32_t mode,
 				uint32_t rate,
@@ -309,6 +328,79 @@ static void voip_process_ul_pkt(uint8_t *voc_pkt,
 			list_add_tail(&buf_node->list, &prtd->out_queue);
 			break;
 		}
+		case MODE_G711:
+		case MODE_G711A:{
+			/* G711 frames are 10ms each, but the DSP works with
+			 * 20ms frames and sends two 10ms frames per buffer.
+			 * Extract the two frames and put them in separate
+			 * buffers.
+			 */
+			/* Remove the first DSP frame info header.
+			 * Header format: G711A
+			 * Bits 0-1: Frame type
+			 * Bits 2-3: Frame rate
+			 *
+			 * Header format: G711
+			 * Bits 2-3: Frame rate
+			 */
+			if (prtd->mode == MODE_G711A)
+				buf_node->frame.header.frame_type =
+							(*voc_pkt) & 0x03;
+			voc_pkt = voc_pkt + DSP_FRAME_HDR_LEN;
+
+			/* There are two frames in the buffer. Length of the
+			 * first frame:
+			 */
+			buf_node->frame.len = (pkt_len -
+					       2 * DSP_FRAME_HDR_LEN) / 2;
+
+			memcpy(&buf_node->frame.voc_pkt[0],
+			       voc_pkt,
+			       buf_node->frame.len);
+			voc_pkt = voc_pkt + buf_node->frame.len;
+
+			list_add_tail(&buf_node->list, &prtd->out_queue);
+
+			/* Get another buffer from the free Q and fill in the
+			 * second frame.
+			 */
+			if (!list_empty(&prtd->free_out_queue)) {
+				buf_node =
+					list_first_entry(&prtd->free_out_queue,
+							 struct voip_buf_node,
+							 list);
+				list_del(&buf_node->list);
+
+				/* Remove the second DSP frame info header.
+				 * Header format:
+				 * Bits 0-1: Frame type
+				 * Bits 2-3: Frame rate
+				 */
+
+				if (prtd->mode == MODE_G711A)
+					buf_node->frame.header.frame_type =
+							(*voc_pkt) & 0x03;
+				voc_pkt = voc_pkt + DSP_FRAME_HDR_LEN;
+
+				/* There are two frames in the buffer. Length
+				 * of the second frame:
+				 */
+				buf_node->frame.len = (pkt_len -
+					2 * DSP_FRAME_HDR_LEN) / 2;
+
+				memcpy(&buf_node->frame.voc_pkt[0],
+				       voc_pkt,
+				       buf_node->frame.len);
+
+				list_add_tail(&buf_node->list,
+					      &prtd->out_queue);
+			} else {
+				/* Drop the second frame */
+				pr_err("%s: UL data dropped, read is slow\n",
+				       __func__);
+			}
+			break;
+		}
 		default: {
 			buf_node->frame.len = pkt_len;
 			memcpy(&buf_node->frame.voc_pkt[0],
@@ -381,6 +473,67 @@ static void voip_process_dl_pkt(uint8_t *voc_pkt,
 				buf_node->frame.len);
 
 			list_add_tail(&buf_node->list, &prtd->free_in_queue);
+			break;
+		}
+		case MODE_G711:
+		case MODE_G711A:{
+			/* G711 frames are 10ms each but the DSP expects 20ms
+			 * worth of data, so send two 10ms frames per buffer.
+			 */
+			/* Add the first DSP frame info header. Header format:
+			 * Bits 0-1: Frame type
+			 * Bits 2-3: Frame rate
+			 */
+
+			*voc_pkt = ((prtd->rate_type  & 0x0F) << 2) |
+				    (buf_node->frame.header.frame_type & 0x03);
+			voc_pkt = voc_pkt + DSP_FRAME_HDR_LEN;
+
+			*pkt_len = buf_node->frame.len + DSP_FRAME_HDR_LEN;
+
+			memcpy(voc_pkt,
+			       &buf_node->frame.voc_pkt[0],
+			       buf_node->frame.len);
+			voc_pkt = voc_pkt + buf_node->frame.len;
+
+			list_add_tail(&buf_node->list, &prtd->free_in_queue);
+
+			if (!list_empty(&prtd->in_queue)) {
+				/* Get the second buffer. */
+				buf_node = list_first_entry(&prtd->in_queue,
+							struct voip_buf_node,
+							list);
+				list_del(&buf_node->list);
+
+				/* Add the second DSP frame info header.
+				 * Header format:
+				 * Bits 0-1: Frame type
+				 * Bits 2-3: Frame rate
+				 */
+				*voc_pkt = ((prtd->rate_type & 0x0F) << 2) |
+				(buf_node->frame.header.frame_type & 0x03);
+				voc_pkt = voc_pkt + DSP_FRAME_HDR_LEN;
+
+				*pkt_len = *pkt_len +
+					buf_node->frame.len + DSP_FRAME_HDR_LEN;
+
+				memcpy(voc_pkt,
+				       &buf_node->frame.voc_pkt[0],
+				       buf_node->frame.len);
+
+				list_add_tail(&buf_node->list,
+					      &prtd->free_in_queue);
+			} else {
+				/* Only 10ms worth of data is available, signal
+				 * erasure frame.
+				 */
+				*voc_pkt = ((prtd->rate_type & 0x0F) << 2) |
+					    (MVS_G711A_ERASURE & 0x03);
+
+				*pkt_len = *pkt_len + DSP_FRAME_HDR_LEN;
+				pr_debug("%s, Only 10ms read, erase 2nd frame\n",
+					 __func__);
+			}
 			break;
 		}
 		default: {
@@ -531,6 +684,7 @@ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
 				list_first_entry(&prtd->free_in_queue,
 						struct voip_buf_node, list);
 			list_del(&buf_node->list);
+			spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
 			if (prtd->mode == MODE_PCM) {
 				ret = copy_from_user(&buf_node->frame.voc_pkt,
 							buf, count);
@@ -538,6 +692,7 @@ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
 			} else
 				ret = copy_from_user(&buf_node->frame,
 							buf, count);
+			spin_lock_irqsave(&prtd->dsp_lock, dsp_flags);
 			list_add_tail(&buf_node->list, &prtd->in_queue);
 			spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
 		} else {
@@ -582,6 +737,7 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 			buf_node = list_first_entry(&prtd->out_queue,
 					struct voip_buf_node, list);
 			list_del(&buf_node->list);
+			spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
 			if (prtd->mode == MODE_PCM)
 				ret = copy_to_user(buf,
 						   &buf_node->frame.voc_pkt,
@@ -595,6 +751,7 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 					__func__, ret);
 				ret = -EFAULT;
 			}
+			spin_lock_irqsave(&prtd->dsp_ul_lock, dsp_flags);
 			list_add_tail(&buf_node->list,
 						&prtd->free_out_queue);
 			spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
@@ -749,7 +906,8 @@ static int msm_pcm_prepare(struct snd_pcm_substream *substream)
 	if ((runtime->format != FORMAT_SPECIAL) &&
 		 ((prtd->mode == MODE_AMR) || (prtd->mode == MODE_AMR_WB) ||
 		 (prtd->mode == MODE_IS127) || (prtd->mode == MODE_4GV_NB) ||
-		 (prtd->mode == MODE_4GV_WB))) {
+		 (prtd->mode == MODE_4GV_WB) || (prtd->mode == MODE_G711) ||
+		 (prtd->mode == MODE_G711A))) {
 		pr_err("mode:%d and format:%u are not mached\n",
 			prtd->mode, (uint32_t)runtime->format);
 		ret =  -EINVAL;
@@ -777,6 +935,7 @@ static int msm_pcm_prepare(struct snd_pcm_substream *substream)
 		}
 		prtd->rate_type = rate_type;
 		media_type = voip_get_media_type(prtd->mode,
+						prtd->rate_type,
 						prtd->play_samp_rate);
 		if (media_type < 0) {
 			pr_err("fail at getting media_type\n");
@@ -1037,6 +1196,10 @@ static int voip_get_rate_type(uint32_t mode, uint32_t rate,
 		}
 		break;
 	}
+	case MODE_G711:
+	case MODE_G711A:
+		*rate_type = rate;
+		break;
 	default:
 		pr_err("wrong mode type.\n");
 		ret = -EINVAL;
@@ -1046,7 +1209,7 @@ static int voip_get_rate_type(uint32_t mode, uint32_t rate,
 	return ret;
 }
 
-static int voip_get_media_type(uint32_t mode,
+static int voip_get_media_type(uint32_t mode, uint32_t rate_type,
 				unsigned int samp_rate)
 {
 	uint32_t media_type;
@@ -1074,6 +1237,13 @@ static int voip_get_media_type(uint32_t mode,
 		break;
 	case MODE_4GV_WB: /* EVRC-WB */
 		media_type = VSS_MEDIA_ID_4GV_WB_MODEM;
+		break;
+	case MODE_G711:
+	case MODE_G711A:
+		if (rate_type == MVS_G711A_MODE_MULAW)
+			media_type = VSS_MEDIA_ID_G711_MULAW;
+		else
+			media_type = VSS_MEDIA_ID_G711_ALAW;
 		break;
 	default:
 		pr_debug(" input mode is not supported\n");
