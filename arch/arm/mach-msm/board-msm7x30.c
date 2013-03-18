@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,6 +11,7 @@
  *
  */
 
+#include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/irq.h>
 #include <linux/gpio.h>
@@ -82,6 +83,7 @@
 #include "pm-boot.h"
 #include "spm.h"
 #include "acpuclock.h"
+#include "clock.h"
 #include <mach/dal_axi.h>
 #include <mach/msm_serial_hs.h>
 #include <mach/qdsp5v2/mi2s.h>
@@ -884,6 +886,7 @@ static struct i2c_board_info cy8info[] __initdata = {
 #ifdef CONFIG_MSM_CAMERA_V4L2
 static struct msm_camera_device_platform_data msm_camera_csi_device_data[] = {
 	{
+		.csiphy_core = 0,
 		.csid_core = 0,
 		.is_vpe    = 1,
 		.ioclk = {
@@ -891,6 +894,7 @@ static struct msm_camera_device_platform_data msm_camera_csi_device_data[] = {
 		},
 	},
 	{
+		.csiphy_core = 0,
 		.csid_core = 0,
 		.is_vpe    = 1,
 		.ioclk = {
@@ -5187,7 +5191,7 @@ static int bluetooth_power(int on)
 
 	int bahama_not_marimba = bahama_present();
 
-	if (bahama_not_marimba == -1) {
+	if (bahama_not_marimba < 0) {
 		printk(KERN_WARNING "%s: bahama_present: %d\n",
 				__func__, bahama_not_marimba);
 		return -ENODEV;
@@ -7158,9 +7162,7 @@ static struct ion_co_heap_pdata co_ion_pdata = {
  * These heaps are listed in the order they will be allocated.
  * Don't swap the order unless you know what you are doing!
  */
-static struct ion_platform_data ion_pdata = {
-	.nr = MSM_ION_HEAP_NUM,
-	.heaps = {
+struct ion_platform_heap msm7x30_heaps[] = {
 		{
 			.id	= ION_SYSTEM_HEAP_ID,
 			.type	= ION_HEAP_TYPE_SYSTEM,
@@ -7173,7 +7175,6 @@ static struct ion_platform_data ion_pdata = {
 			.type	= ION_HEAP_TYPE_CARVEOUT,
 			.name	= ION_CAMERA_HEAP_NAME,
 			.memory_type = ION_EBI_TYPE,
-			.has_outer_cache = 1,
 			.extra_data = (void *)&co_ion_pdata,
 		},
 		/* PMEM_AUDIO */
@@ -7182,7 +7183,6 @@ static struct ion_platform_data ion_pdata = {
 			.type	= ION_HEAP_TYPE_CARVEOUT,
 			.name	= ION_AUDIO_HEAP_NAME,
 			.memory_type = ION_EBI_TYPE,
-			.has_outer_cache = 1,
 			.extra_data = (void *)&co_ion_pdata,
 		},
 		/* PMEM_MDP = SF */
@@ -7191,11 +7191,14 @@ static struct ion_platform_data ion_pdata = {
 			.type	= ION_HEAP_TYPE_CARVEOUT,
 			.name	= ION_SF_HEAP_NAME,
 			.memory_type = ION_EBI_TYPE,
-			.has_outer_cache = 1,
 			.extra_data = (void *)&co_ion_pdata,
 		},
 #endif
-	}
+};
+
+static struct ion_platform_data ion_pdata = {
+	.nr = MSM_ION_HEAP_NUM,
+	.heaps = msm7x30_heaps,
 };
 
 static struct platform_device ion_dev = {
@@ -7346,9 +7349,8 @@ static void __init msm7x30_map_io(void)
 {
 	msm_shared_ram_phys = 0x00100000;
 	msm_map_msm7x30_io();
-	if (socinfo_init() < 0)
-		printk(KERN_ERR "%s: socinfo_init() failed!\n",
-		       __func__);
+	if (IS_ERR_OR_NULL(socinfo_init()))
+		pr_err("socinfo_init() failed!\n");
 }
 
 static void __init msm7x30_init_early(void)

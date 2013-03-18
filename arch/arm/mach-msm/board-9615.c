@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,7 +29,7 @@
 #include <linux/power/ltc4088-charger.h>
 #include <linux/gpio.h>
 #include <linux/msm_tsens.h>
-#include <linux/ion.h>
+#include <linux/msm_ion.h>
 #include <linux/memory.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -50,6 +50,7 @@
 #include "devices.h"
 #include "board-9615.h"
 #include "pm.h"
+#include "clock.h"
 #include "pm-boot.h"
 #include <mach/gpiomux.h>
 #include "ci13xxx_udc.h"
@@ -80,9 +81,7 @@ static struct ion_co_heap_pdata co_ion_pdata = {
 	.align = PAGE_SIZE,
 };
 
-static struct ion_platform_data ion_pdata = {
-	.nr = MSM_ION_HEAP_NUM,
-	.heaps = {
+static struct ion_platform_heap msm9615_heaps[] = {
 		{
 			.id	= ION_SYSTEM_HEAP_ID,
 			.type	= ION_HEAP_TYPE_SYSTEM,
@@ -101,7 +100,11 @@ static struct ion_platform_data ion_pdata = {
 			.memory_type = ION_EBI_TYPE,
 			.extra_data = (void *) &co_ion_pdata,
 		},
-	}
+};
+
+static struct ion_platform_data ion_pdata = {
+	.nr = MSM_ION_HEAP_NUM,
+	.heaps = msm9615_heaps,
 };
 
 static struct platform_device ion_dev = {
@@ -251,6 +254,8 @@ static struct pm8xxx_adc_amux pm8018_adc_channels_data[] = {
 		ADC_DECIMATION_TYPE2, ADC_SCALE_DEFAULT},
 	{"pa_therm0", ADC_MPP_1_AMUX3, CHAN_PATH_SCALING1, AMUX_RSV1,
 		ADC_DECIMATION_TYPE2, ADC_SCALE_PA_THERM},
+	{"xo_therm", CHANNEL_MUXOFF, CHAN_PATH_SCALING1, AMUX_RSV0,
+		ADC_DECIMATION_TYPE2, ADC_SCALE_XOTHERM},
 };
 
 static struct pm8xxx_adc_properties pm8018_adc_data = {
@@ -612,7 +617,7 @@ static int msm_hsusb_vbus_power(bool on)
 static int shelby_phy_init_seq[] = {
 	0x44, 0x80,/* set VBUS valid threshold and
 			disconnect valid threshold */
-	0x38, 0x81, /* update DC voltage level */
+	0x68, 0x81, /* update DC voltage level */
 	0x24, 0x82,/* set preemphasis and rise/fall time */
 	0x13, 0x83,/* set source impedance adjustment */
 	-1};
@@ -620,8 +625,8 @@ static int shelby_phy_init_seq[] = {
 #define USB_BAM_PHY_BASE	0x12502000
 #define HSIC_BAM_PHY_BASE	0x12542000
 #define A2_BAM_PHY_BASE		0x124C2000
-static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
-	[0][0][USB_TO_PEER_PERIPHERAL] = {
+static struct usb_bam_pipe_connect msm_usb_bam_connections[MAX_BAMS][8][2] = {
+	[HSUSB_BAM][0][USB_TO_PEER_PERIPHERAL] = {
 		.src_phy_addr = USB_BAM_PHY_BASE,
 		.src_pipe_index = 11,
 		.dst_phy_addr = A2_BAM_PHY_BASE,
@@ -631,7 +636,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x1700,
 		.desc_fifo_size = 0x300,
 	},
-	[0][0][PEER_PERIPHERAL_TO_USB] = {
+	[HSUSB_BAM][0][PEER_PERIPHERAL_TO_USB] = {
 		.src_phy_addr = A2_BAM_PHY_BASE,
 		.src_pipe_index = 1,
 		.dst_phy_addr = USB_BAM_PHY_BASE,
@@ -641,7 +646,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x1000,
 		.desc_fifo_size = 0x100,
 	},
-	[0][1][USB_TO_PEER_PERIPHERAL] = {
+	[HSUSB_BAM][1][USB_TO_PEER_PERIPHERAL] = {
 		.src_phy_addr = USB_BAM_PHY_BASE,
 		.src_pipe_index = 13,
 		.dst_phy_addr = A2_BAM_PHY_BASE,
@@ -651,7 +656,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x2700,
 		.desc_fifo_size = 0x300,
 	},
-	[0][1][PEER_PERIPHERAL_TO_USB] = {
+	[HSUSB_BAM][1][PEER_PERIPHERAL_TO_USB] = {
 		.src_phy_addr = A2_BAM_PHY_BASE,
 		.src_pipe_index = 3,
 		.dst_phy_addr = USB_BAM_PHY_BASE,
@@ -661,7 +666,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x2000,
 		.desc_fifo_size = 0x100,
 	},
-	[0][2][USB_TO_PEER_PERIPHERAL] = {
+	[HSUSB_BAM][2][USB_TO_PEER_PERIPHERAL] = {
 		.src_phy_addr = USB_BAM_PHY_BASE,
 		.src_pipe_index = 15,
 		.dst_phy_addr = A2_BAM_PHY_BASE,
@@ -671,7 +676,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x3700,
 		.desc_fifo_size = 0x300,
 	},
-	[0][2][PEER_PERIPHERAL_TO_USB] = {
+	[HSUSB_BAM][2][PEER_PERIPHERAL_TO_USB] = {
 		.src_phy_addr = A2_BAM_PHY_BASE,
 		.src_pipe_index = 5,
 		.dst_phy_addr = USB_BAM_PHY_BASE,
@@ -681,7 +686,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x3000,
 		.desc_fifo_size = 0x100,
 	},
-	[1][0][USB_TO_PEER_PERIPHERAL] = {
+	[HSIC_BAM][0][USB_TO_PEER_PERIPHERAL] = {
 		.src_phy_addr = HSIC_BAM_PHY_BASE,
 		.src_pipe_index = 1,
 		.dst_phy_addr = A2_BAM_PHY_BASE,
@@ -691,7 +696,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x1700,
 		.desc_fifo_size = 0x300,
 	},
-	[1][0][PEER_PERIPHERAL_TO_USB] = {
+	[HSIC_BAM][0][PEER_PERIPHERAL_TO_USB] = {
 		.src_phy_addr = A2_BAM_PHY_BASE,
 		.src_pipe_index = 1,
 		.dst_phy_addr = HSIC_BAM_PHY_BASE,
@@ -701,7 +706,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x1000,
 		.desc_fifo_size = 0x100,
 	},
-	[1][1][USB_TO_PEER_PERIPHERAL] = {
+	[HSIC_BAM][1][USB_TO_PEER_PERIPHERAL] = {
 		.src_phy_addr = HSIC_BAM_PHY_BASE,
 		.src_pipe_index = 3,
 		.dst_phy_addr = A2_BAM_PHY_BASE,
@@ -711,7 +716,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x2700,
 		.desc_fifo_size = 0x300,
 	},
-	[1][1][PEER_PERIPHERAL_TO_USB] = {
+	[HSIC_BAM][1][PEER_PERIPHERAL_TO_USB] = {
 		.src_phy_addr = A2_BAM_PHY_BASE,
 		.src_pipe_index = 3,
 		.dst_phy_addr = HSIC_BAM_PHY_BASE,
@@ -721,7 +726,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x2000,
 		.desc_fifo_size = 0x100,
 	},
-	[1][2][USB_TO_PEER_PERIPHERAL] = {
+	[HSIC_BAM][2][USB_TO_PEER_PERIPHERAL] = {
 		.src_phy_addr = HSIC_BAM_PHY_BASE,
 		.src_pipe_index = 5,
 		.dst_phy_addr = A2_BAM_PHY_BASE,
@@ -731,7 +736,7 @@ static struct usb_bam_pipe_connect msm_usb_bam_connections[2][4][2] = {
 		.desc_fifo_base_offset = 0x3700,
 		.desc_fifo_size = 0x300,
 	},
-	[1][2][PEER_PERIPHERAL_TO_USB] = {
+	[HSIC_BAM][2][PEER_PERIPHERAL_TO_USB] = {
 		.src_phy_addr = A2_BAM_PHY_BASE,
 		.src_pipe_index = 5,
 		.dst_phy_addr = HSIC_BAM_PHY_BASE,
@@ -761,6 +766,7 @@ static struct msm_otg_platform_data msm_otg_pdata = {
 	.disable_reset_on_disconnect	= true,
 	.enable_lpm_on_dev_suspend	= true,
 	.core_clk_always_on_workaround = true,
+	.delay_lpm_on_disconnect = true,
 };
 
 
@@ -869,6 +875,8 @@ static struct platform_device *common_devices[] = {
 #ifdef CONFIG_LTC4088_CHARGER
 	&msm_device_charger,
 #endif
+	&msm_9615_q6_lpass,
+	&msm_9615_q6_mss,
 	&msm_device_otg,
 	&msm_device_hsic_peripheral,
 	&msm_device_gadget_peripheral,
@@ -876,7 +884,9 @@ static struct platform_device *common_devices[] = {
 	&msm_device_hsic_host,
 	&msm_device_usb_bam,
 	&msm_android_usb_device,
+#ifdef CONFIG_USB_CI13XXX_MSM_HSIC
 	&msm_android_usb_hsic_device,
+#endif
 	&msm9615_device_uart_gsbi4,
 	&msm9615_device_ext_2p95v_vreg,
 	&msm9615_device_ssbi_pmic1,
@@ -904,9 +914,12 @@ static struct platform_device *common_devices[] = {
 	&msm_cpu_fe,
 	&msm_stub_codec,
 	&msm_voice,
+	&msm_dtmf,
 	&msm_voip,
 	&msm_i2s_cpudai0,
 	&msm_i2s_cpudai1,
+	&msm_i2s_cpudai4,
+	&msm_i2s_cpudai5,
 	&msm_pcm_hostless,
 	&msm_cpudai_afe_01_rx,
 	&msm_cpudai_afe_01_tx,
@@ -917,6 +930,10 @@ static struct platform_device *common_devices[] = {
 	&msm_cpudai_auxpcm_tx,
 	&msm_cpudai_sec_auxpcm_rx,
 	&msm_cpudai_sec_auxpcm_tx,
+	&msm_cpudai_stub,
+	&msm_cpudai_incall_music_rx,
+	&msm_cpudai_incall_record_rx,
+	&msm_cpudai_incall_record_tx,
 
 #if defined(CONFIG_CRYPTO_DEV_QCRYPTO) || \
 		defined(CONFIG_CRYPTO_DEV_QCRYPTO_MODULE)
@@ -932,7 +949,9 @@ static struct platform_device *common_devices[] = {
 	&msm_bus_def_fab,
 	&msm9615_rpm_log_device,
 	&msm9615_rpm_stat_device,
+	&msm9615_rpm_master_stat_device,
 	&msm_tsens_device,
+	&msm9615_pm_8x60,
 };
 
 static void __init msm9615_i2c_init(void)
@@ -976,6 +995,7 @@ static void __init msm9615_common_init(void)
 				msm_android_usb_hsic_device.dev.platform_data;
 
 	msm9615_device_init();
+	platform_device_register(&msm_gpio_device);
 	msm9615_init_gpiomux();
 	msm9615_i2c_init();
 	regulator_suppress_info_printing();

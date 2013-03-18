@@ -24,10 +24,10 @@
 #include <asm/mach-types.h>
 
 #include <mach/msm_iomap.h>
-#include <mach/clk.h>
 #include <mach/rpm-9615.h>
 #include <mach/rpm-regulator.h>
 
+#include "clock.h"
 #include "clock-local.h"
 #include "clock-voter.h"
 #include "clock-rpm.h"
@@ -182,7 +182,8 @@ enum vdd_dig_levels {
 	VDD_DIG_NONE,
 	VDD_DIG_LOW,
 	VDD_DIG_NOMINAL,
-	VDD_DIG_HIGH
+	VDD_DIG_HIGH,
+	VDD_DIG_NUM
 };
 
 static int set_vdd_dig(struct clk_vdd_class *vdd_class, int level)
@@ -198,64 +199,27 @@ static int set_vdd_dig(struct clk_vdd_class *vdd_class, int level)
 		RPM_VREG_VOTER3, vdd_corner[level], RPM_VREG_CORNER_HIGH, 1);
 }
 
-static DEFINE_VDD_CLASS(vdd_dig, set_vdd_dig);
+static DEFINE_VDD_CLASS(vdd_dig, set_vdd_dig, VDD_DIG_NUM);
 
 #define VDD_DIG_FMAX_MAP1(l1, f1) \
-	.vdd_class = &vdd_dig, \
-	.fmax[VDD_DIG_##l1] = (f1)
+	.vdd_class = &vdd_dig,			\
+	.fmax = (unsigned long[VDD_DIG_NUM]) {	\
+		[VDD_DIG_##l1] = (f1),		\
+	},					\
+	.num_fmax = VDD_DIG_NUM
 #define VDD_DIG_FMAX_MAP2(l1, f1, l2, f2) \
-	.vdd_class = &vdd_dig, \
-	.fmax[VDD_DIG_##l1] = (f1), \
-	.fmax[VDD_DIG_##l2] = (f2)
+	.vdd_class = &vdd_dig,			\
+	.fmax = (unsigned long[VDD_DIG_NUM]) {	\
+		[VDD_DIG_##l1] = (f1),		\
+		[VDD_DIG_##l2] = (f2),		\
+	},					\
+	.num_fmax = VDD_DIG_NUM
 
 /*
  * Clock Descriptions
  */
 
 DEFINE_CLK_RPM_BRANCH(cxo_clk, cxo_a_clk, CXO, 19200000);
-
-static DEFINE_SPINLOCK(soft_vote_lock);
-
-static int pll_acpu_vote_clk_enable(struct clk *c)
-{
-	int ret = 0;
-	unsigned long flags;
-	struct pll_vote_clk *pllv = to_pll_vote_clk(c);
-
-	spin_lock_irqsave(&soft_vote_lock, flags);
-
-	if (!*pllv->soft_vote)
-		ret = pll_vote_clk_enable(c);
-	if (ret == 0)
-		*pllv->soft_vote |= (pllv->soft_vote_mask);
-
-	spin_unlock_irqrestore(&soft_vote_lock, flags);
-	return ret;
-}
-
-static void pll_acpu_vote_clk_disable(struct clk *c)
-{
-	unsigned long flags;
-	struct pll_vote_clk *pllv = to_pll_vote_clk(c);
-
-	spin_lock_irqsave(&soft_vote_lock, flags);
-
-	*pllv->soft_vote &= ~(pllv->soft_vote_mask);
-	if (!*pllv->soft_vote)
-		pll_vote_clk_disable(c);
-
-	spin_unlock_irqrestore(&soft_vote_lock, flags);
-}
-
-static struct clk_ops clk_ops_pll_acpu_vote = {
-	.enable = pll_acpu_vote_clk_enable,
-	.disable = pll_acpu_vote_clk_disable,
-	.is_enabled = pll_vote_clk_is_enabled,
-	.get_parent = pll_vote_clk_get_parent,
-};
-
-#define PLL_SOFT_VOTE_PRIMARY	BIT(0)
-#define PLL_SOFT_VOTE_ACPU	BIT(1)
 
 static unsigned int soft_vote_pll0;
 
@@ -264,15 +228,14 @@ static struct pll_vote_clk pll0_clk = {
 	.en_mask = BIT(0),
 	.status_reg = BB_PLL0_STATUS_REG,
 	.status_mask = BIT(16),
-	.parent = &cxo_clk.c,
 	.soft_vote = &soft_vote_pll0,
 	.soft_vote_mask = PLL_SOFT_VOTE_PRIMARY,
 	.c = {
+		.parent = &cxo_clk.c,
 		.dbg_name = "pll0_clk",
 		.rate = 276000000,
 		.ops = &clk_ops_pll_acpu_vote,
 		CLK_INIT(pll0_clk.c),
-		.warned = true,
 	},
 };
 
@@ -288,7 +251,6 @@ static struct pll_vote_clk pll0_activeonly_clk = {
 		.rate = 276000000,
 		.ops = &clk_ops_pll_acpu_vote,
 		CLK_INIT(pll0_activeonly_clk.c),
-		.warned = true,
 	},
 };
 
@@ -297,13 +259,12 @@ static struct pll_vote_clk pll4_clk = {
 	.en_mask = BIT(4),
 	.status_reg = LCC_PLL0_STATUS_REG,
 	.status_mask = BIT(16),
-	.parent = &cxo_clk.c,
 	.c = {
+		.parent = &cxo_clk.c,
 		.dbg_name = "pll4_clk",
 		.rate = 393216000,
 		.ops = &clk_ops_pll_vote,
 		CLK_INIT(pll4_clk.c),
-		.warned = true,
 	},
 };
 
@@ -314,15 +275,14 @@ static struct pll_vote_clk pll8_clk = {
 	.en_mask = BIT(8),
 	.status_reg = BB_PLL8_STATUS_REG,
 	.status_mask = BIT(16),
-	.parent = &cxo_clk.c,
 	.soft_vote = &soft_vote_pll8,
 	.soft_vote_mask = PLL_SOFT_VOTE_PRIMARY,
 	.c = {
+		.parent = &cxo_clk.c,
 		.dbg_name = "pll8_clk",
 		.rate = 384000000,
 		.ops = &clk_ops_pll_acpu_vote,
 		CLK_INIT(pll8_clk.c),
-		.warned = true,
 	},
 };
 
@@ -338,7 +298,6 @@ static struct pll_vote_clk pll8_activeonly_clk = {
 		.rate = 384000000,
 		.ops = &clk_ops_pll_acpu_vote,
 		CLK_INIT(pll8_activeonly_clk.c),
-		.warned = true,
 	},
 };
 
@@ -349,7 +308,6 @@ static struct pll_clk pll9_activeonly_clk = {
 		.rate = 440000000,
 		.ops = &clk_ops_local_pll,
 		CLK_INIT(pll9_activeonly_clk.c),
-		.warned = true,
 	},
 };
 
@@ -358,13 +316,12 @@ static struct pll_vote_clk pll14_clk = {
 	.en_mask = BIT(11),
 	.status_reg = BB_PLL14_STATUS_REG,
 	.status_mask = BIT(16),
-	.parent = &cxo_clk.c,
 	.c = {
+		.parent = &cxo_clk.c,
 		.dbg_name = "pll14_clk",
 		.rate = 480000000,
 		.ops = &clk_ops_pll_vote,
 		CLK_INIT(pll14_clk.c),
-		.warned = true,
 	},
 };
 
@@ -810,8 +767,8 @@ static struct branch_clk usb_hsic_hsio_cal_clk = {
 		.halt_reg = CLK_HALT_DFAB_STATE_REG,
 		.halt_bit = 8,
 	},
-	.parent = &cxo_clk.c,
 	.c = {
+		.parent = &cxo_clk.c,
 		.dbg_name = "usb_hsic_hsio_cal_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(usb_hsic_hsio_cal_clk.c),
@@ -1338,8 +1295,8 @@ static struct branch_clk sps_slimbus_clk = {
 		.halt_check = ENABLE,
 		.halt_bit = 1,
 	},
-	.parent = &audio_slimbus_clk.c,
 	.c = {
+		.parent = &audio_slimbus_clk.c,
 		.dbg_name = "sps_slimbus_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(sps_slimbus_clk.c),
@@ -1353,8 +1310,8 @@ static struct branch_clk slimbus_xo_src_clk = {
 		.halt_reg = CLK_HALT_DFAB_STATE_REG,
 		.halt_bit = 28,
 	},
-	.parent = &sps_slimbus_clk.c,
 	.c = {
+		.parent = &sps_slimbus_clk.c,
 		.dbg_name = "slimbus_xo_src_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(slimbus_xo_src_clk.c),
@@ -1814,14 +1771,14 @@ static void __init msm9615_clock_pre_init(void)
 		regval |= BIT(12);
 		writel_relaxed(regval, BB_PLL0_TEST_CTL_REG);
 
-		configure_pll(&pll0_config, &pll0_regs, 1);
+		configure_sr_pll(&pll0_config, &pll0_regs, 1);
 	}
 
 	/* Check if PLL14 is enabled in FSM mode */
 	is_pll_enabled  = readl_relaxed(BB_PLL14_STATUS_REG) & BIT(16);
 
 	if (!is_pll_enabled)
-		configure_pll(&pll14_config, &pll14_regs, 1);
+		configure_sr_pll(&pll14_config, &pll14_regs, 1);
 	else if (!(readl_relaxed(BB_PLL14_MODE_REG) & BIT(20)))
 		WARN(1, "PLL14 enabled in non-FSM mode!\n");
 
