@@ -32,6 +32,7 @@
 #include <asm/sizes.h>
 #include <asm/tlb.h>
 #include <asm/fixmap.h>
+#include <asm/cputype.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -40,6 +41,8 @@
 
 static unsigned long phys_initrd_start __initdata = 0;
 static unsigned long phys_initrd_size __initdata = 0;
+int msm_krait_need_wfe_fixup;
+EXPORT_SYMBOL(msm_krait_need_wfe_fixup);
 
 static int __init early_initrd(char *p)
 {
@@ -247,8 +250,8 @@ void __init setup_dma_zone(struct machine_desc *mdesc)
 #endif
 }
 
-#ifdef CONFIG_ARCH_POPULATES_NODE_MAP
-static void __init arm_bootmem_free_apnm(unsigned long max_low,
+#ifdef CONFIG_HAVE_MEMBLOCK_NODE_MAP
+static void __init arm_bootmem_free_hmnm(unsigned long max_low,
 	unsigned long max_high)
 {
 	unsigned long max_zone_pfns[MAX_NR_ZONES];
@@ -264,7 +267,7 @@ static void __init arm_bootmem_free_apnm(unsigned long max_low,
 		unsigned long start = memblock_region_memory_base_pfn(reg);
 		unsigned long end = memblock_region_memory_end_pfn(reg);
 
-		add_active_range(0, start, end);
+		memblock_set_node(PFN_PHYS(start), PFN_PHYS(end - start), 0);
 	}
 	free_area_init_nodes(max_zone_pfns);
 }
@@ -372,29 +375,61 @@ static int __init meminfo_cmp(const void *_a, const void *_b)
 	return cmp < 0 ? -1 : cmp > 0 ? 1 : 0;
 }
 
+unsigned long memory_hole_offset;
+EXPORT_SYMBOL(memory_hole_offset);
+unsigned long memory_hole_start;
+EXPORT_SYMBOL(memory_hole_start);
+unsigned long memory_hole_end;
+EXPORT_SYMBOL(memory_hole_end);
+
 #ifdef CONFIG_DONT_MAP_HOLE_AFTER_MEMBANK0
-unsigned long membank0_size;
-EXPORT_SYMBOL(membank0_size);
-unsigned long membank1_start;
-EXPORT_SYMBOL(membank1_start);
-
-void __init find_membank0_hole(void)
+void find_memory_hole(void)
 {
-	sort(&meminfo.bank, meminfo.nr_banks,
-		sizeof(meminfo.bank[0]), meminfo_cmp, NULL);
+	int i;
+	unsigned long hole_start;
+	unsigned long hole_size;
 
-	membank0_size = meminfo.bank[0].size;
-	membank1_start = meminfo.bank[1].start;
+	/*
+	 * Find the start and end of the hole, using meminfo
+	 * if it hasnt been found already.
+	 */
+	if (memory_hole_start == 0 && memory_hole_end == 0) {
+		for (i = 0; i < (meminfo.nr_banks - 1); i++) {
+			if ((meminfo.bank[i].start + meminfo.bank[i].size) !=
+						meminfo.bank[i+1].start) {
+				if (meminfo.bank[i].start + meminfo.bank[i].size
+							<= MAX_HOLE_ADDRESS) {
+
+					hole_start = meminfo.bank[i].start +
+							meminfo.bank[i].size;
+					hole_size = meminfo.bank[i+1].start -
+								hole_start;
+
+					if (memory_hole_start == 0 &&
+							memory_hole_end == 0) {
+						memory_hole_start = hole_start;
+						memory_hole_end = hole_start +
+								hole_size;
+					} else if ((memory_hole_end -
+					memory_hole_start) <= hole_size) {
+						memory_hole_start = hole_start;
+						memory_hole_end = hole_start +
+								hole_size;
+					}
+				}
+			}
+		}
+	}
+	memory_hole_offset = memory_hole_start - PHYS_OFFSET;
 }
+
 #endif
 
 void __init arm_memblock_init(struct meminfo *mi, struct machine_desc *mdesc)
 {
 	int i;
 
-#ifndef CONFIG_DONT_MAP_HOLE_AFTER_MEMBANK0
 	sort(&meminfo.bank, meminfo.nr_banks, sizeof(meminfo.bank[0]), meminfo_cmp, NULL);
-#endif
 
 	for (i = 0; i < mi->nr_banks; i++)
 		memblock_add(mi->bank[i].start, mi->bank[i].size);
@@ -488,8 +523,8 @@ void __init bootmem_init(void)
 	 */
 	sparse_init();
 
-#ifdef CONFIG_ARCH_POPULATES_NODE_MAP
-	arm_bootmem_free_apnm(max_low, max_high);
+#ifdef CONFIG_HAVE_MEMBLOCK_NODE_MAP
+	arm_bootmem_free_hmnm(max_low, max_high);
 #else
 	/*
 	 * Now free the memory - free_area_init_node needs
@@ -768,6 +803,9 @@ void __init mem_init(void)
 
 	printk(KERN_NOTICE "Virtual kernel memory layout:\n"
 			"    vector  : 0x%08lx - 0x%08lx   (%4ld kB)\n"
+#ifdef CONFIG_ARM_USE_USER_ACCESSIBLE_TIMERS
+			"    timers  : 0x%08lx - 0x%08lx   (%4ld kB)\n"
+#endif
 #ifdef CONFIG_HAVE_TCM
 			"    DTCM    : 0x%08lx - 0x%08lx   (%4ld kB)\n"
 			"    ITCM    : 0x%08lx - 0x%08lx   (%4ld kB)\n"
@@ -788,6 +826,11 @@ void __init mem_init(void)
 
 			MLK(UL(CONFIG_VECTORS_BASE), UL(CONFIG_VECTORS_BASE) +
 				(PAGE_SIZE)),
+#ifdef CONFIG_ARM_USE_USER_ACCESSIBLE_TIMERS
+			MLK(UL(CONFIG_ARM_USER_ACCESSIBLE_TIMER_BASE),
+				UL(CONFIG_ARM_USER_ACCESSIBLE_TIMER_BASE)
+					+ (PAGE_SIZE)),
+#endif
 #ifdef CONFIG_HAVE_TCM
 			MLK(DTCM_OFFSET, (unsigned long) dtcm_end),
 			MLK(ITCM_OFFSET, (unsigned long) itcm_end),
@@ -915,4 +958,18 @@ static int __init keepinitrd_setup(char *__unused)
 }
 
 __setup("keepinitrd", keepinitrd_setup);
+#endif
+
+#ifdef CONFIG_MSM_KRAIT_WFE_FIXUP
+static int __init msm_krait_wfe_init(void)
+{
+	unsigned int val, midr;
+	midr = read_cpuid_id() & 0xffffff00;
+	if ((midr == 0x511f0400) || (midr == 0x510f0600)) {
+		asm volatile("mrc p15, 7, %0, c15, c0, 5" : "=r" (val));
+		msm_krait_need_wfe_fixup = (val & 0x10000) ? 1 : 0;
+	}
+	return 0;
+}
+pure_initcall(msm_krait_wfe_init);
 #endif
