@@ -18,6 +18,7 @@
 #include <linux/wait.h>
 #include <linux/jiffies.h>
 #include <linux/sched.h>
+#include <linux/msm_ion.h>
 #include <mach/qdsp6v2/audio_acdb.h>
 #include <sound/apr_audio-v2.h>
 #include <sound/q6afe-v2.h>

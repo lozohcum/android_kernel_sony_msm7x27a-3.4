@@ -45,6 +45,7 @@
 #include <linux/msm_adc.h>
 #include <linux/m_adcproc.h>
 #include <linux/platform_data/qcom_crypto_device.h>
+#include <linux/msm_ion.h>
 
 #define PMIC_GPIO_INT		144
 #define PMIC_VREG_WLAN_LEVEL	2900

@@ -14,6 +14,7 @@
 #ifndef MDSS_H
 #define MDSS_H
 
+#include <linux/msm_ion.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>

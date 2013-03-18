@@ -43,7 +43,7 @@
 #include <mach/qdsp5v2/audio_dev_ctl.h>
 #include <mach/msm_memtypes.h>
 #include <mach/cpuidle.h>
-
+#include <linux/msm_ion.h>
 #include <mach/htc_pwrsink.h>
 #include <mach/debug_mm.h>
 

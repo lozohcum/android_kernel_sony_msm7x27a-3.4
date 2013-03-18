@@ -35,11 +35,11 @@
 #include <linux/delay.h>
 #include <linux/list.h>
 #include <linux/earlysuspend.h>
-#include <linux/android_pmem.h>
 #include <linux/slab.h>
 #include <linux/msm_audio.h>
 #include <linux/msm_audio_wma.h>
 #include <linux/memory_alloc.h>
+#include <linux/msm_ion.h>
 #include <mach/qdsp5v2/audio_dev_ctl.h>
 
 #include <mach/msm_adsp.h>

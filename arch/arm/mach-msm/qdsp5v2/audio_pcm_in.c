@@ -27,7 +27,7 @@
 #include <linux/wait.h>
 #include <linux/dma-mapping.h>
 #include <linux/msm_audio.h>
-#include <linux/android_pmem.h>
+#include <linux/msm_ion.h>
 #include <linux/memory_alloc.h>
 #include <mach/msm_memtypes.h>
 
