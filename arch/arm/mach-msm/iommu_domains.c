@@ -191,6 +191,7 @@ int msm_iommu_map_contig_buffer(unsigned long phys,
 
 	return ret;
 }
+EXPORT_SYMBOL(msm_iommu_map_contig_buffer);
 
 void msm_iommu_unmap_contig_buffer(unsigned long iova,
 					unsigned int domain_no,
@@ -203,6 +204,7 @@ void msm_iommu_unmap_contig_buffer(unsigned long iova,
 	iommu_unmap_range(msm_get_iommu_domain(domain_no), iova, size);
 	msm_free_iova_address(iova, domain_no, partition_no, size);
 }
+EXPORT_SYMBOL(msm_iommu_unmap_contig_buffer);
 
 static struct msm_iova_data *find_domain(int domain_num)
 {
@@ -265,6 +267,7 @@ struct iommu_domain *msm_get_iommu_domain(int domain_num)
 	else
 		return NULL;
 }
+EXPORT_SYMBOL(msm_get_iommu_domain);
 
 int msm_allocate_iova_address(unsigned int iommu_domain,
 					unsigned int partition_no,
@@ -342,6 +345,7 @@ int msm_register_domain(struct msm_iova_layout *layout)
 	int i;
 	struct msm_iova_data *data;
 	struct mem_pool *pools;
+	struct bus_type *bus;
 
 	if (!layout)
 		return -EINVAL;
@@ -387,11 +391,14 @@ int msm_register_domain(struct msm_iova_layout *layout)
 		}
 	}
 
+	bus = layout->is_secure == MSM_IOMMU_DOMAIN_SECURE ?
+					&msm_iommu_sec_bus_type :
+					&platform_bus_type;
+
 	data->pools = pools;
 	data->npools = layout->npartitions;
 	data->domain_num = atomic_inc_return(&domain_nums);
-	data->domain = iommu_domain_alloc(&platform_bus_type,
-					  layout->domain_flags);
+	data->domain = iommu_domain_alloc(bus, layout->domain_flags);
 
 	add_domain(data);
 
@@ -402,6 +409,7 @@ out:
 
 	return -EINVAL;
 }
+EXPORT_SYMBOL(msm_register_domain);
 
 static int __init iommu_domain_probe(struct platform_device *pdev)
 {
