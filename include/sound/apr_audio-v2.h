@@ -242,18 +242,18 @@ struct adm_cmd_device_open_v5 {
  */
 struct adm_cmd_set_pp_params_v5 {
 	struct apr_hdr hdr;
-		u32                  data_payload_addr_lsw;
+	u32		payload_addr_lsw;
 	/* LSW of parameter data payload address.*/
-	u32                  data_payload_addr_msw;
+	u32		payload_addr_msw;
 	/* MSW of parameter data payload address.*/
 
-		u32                  mem_map_handle;
+	u32		mem_map_handle;
 /* Memory map handle returned by ADM_CMD_SHARED_MEM_MAP_REGIONS
  * command */
 /* If mem_map_handle is zero implies the message is in
  * the payload */
 
-	u32                  data_payload_size;
+	u32		payload_size;
 /* Size in bytes of the variable payload accompanying this
  * message or
  * in shared memory. This is used for parsing the parameter
@@ -280,6 +280,26 @@ struct adm_param_data_v5 {
 	 * This field must be set to zero.
 	 */
 } __packed;
+
+/* Defined specifically for in-band use, includes params */
+struct adm_cmd_set_pp_params_inband_v5 {
+	struct apr_hdr hdr;
+	/* LSW of parameter data payload address.*/
+	u32		payload_addr_lsw;
+	/* MSW of parameter data payload address.*/
+	u32		payload_addr_msw;
+	/* Memory map handle returned by ADM_CMD_SHARED_MEM_MAP_REGIONS */
+	/* command. If mem_map_handle is zero implies the message is in */
+	/* the payload */
+	u32		mem_map_handle;
+	/* Size in bytes of the variable payload accompanying this */
+	/* message or in shared memory. This is used for parsing the */
+	/* parameter payload. */
+	u32		payload_size;
+	/* Parameters passed for in band payload */
+	struct adm_param_data_v5	params;
+} __packed;
+
 
 /* Returns the status and COPP ID to an #ADM_CMD_DEVICE_OPEN_V5 command.
  */
@@ -573,6 +593,7 @@ struct adm_cmd_matrix_mute_v5 {
 
 /*  Payload of the #ADM_CMD_CONNECT_AFE_PORT_V5 command.*/
 struct adm_cmd_connect_afe_port_v5 {
+	struct apr_hdr     hdr;
 	u8                  mode;
 /* ID of the stream router (RX/TX). Use the
  * ADM_STRTR_ID_RX or ADM_STRTR_IDX macros
@@ -711,8 +732,8 @@ struct adm_cmd_connect_afe_port_v5 {
 #define AFE_PORT_ID_PRIMARY_MI2S_TX         0x1001
 #define AFE_PORT_ID_SECONDARY_MI2S_RX       0x1002
 #define AFE_PORT_ID_SECONDARY_MI2S_TX       0x1003
-#define AFE_PORT_IDERTIARY_MI2S_RX        0x1004
-#define AFE_PORT_IDERTIARY_MI2S_TX        0x1005
+#define AFE_PORT_ID_TERTIARY_MI2S_RX        0x1004
+#define AFE_PORT_ID_TERTIARY_MI2S_TX        0x1005
 #define AFE_PORT_ID_QUATERNARY_MI2S_RX      0x1006
 #define AFE_PORT_ID_QUATERNARY_MI2S_TX      0x1007
 #define AUDIO_PORT_ID_I2S_RX				0x1008
@@ -1626,7 +1647,7 @@ struct afe_param_id_hdmi_multi_chan_audio_cfg {
  * Supported values: #AFE_API_VERSION_HDMI_CONFIG
  */
 
-u16                  dataype;
+u16                  datatype;
 /* data type
  * Supported values:
  * - #LINEAR_PCM_DATA
@@ -1883,12 +1904,80 @@ struct afe_param_id_rt_proxy_port_cfg {
 	/* For 32 bit alignment. */
 } __packed;
 
+
+/* This param id is used to configure the Pseudoport interface */
+
+#define AFE_PARAM_ID_PSEUDO_PORT_CONFIG	0x00010219
+
+/* Version information used to handle future additions to the configuration
+ * interface (for backward compatibility).
+ */
+#define AFE_API_VERSION_PSEUDO_PORT_CONFIG                          0x1
+
+/* Enumeration for setting the timing_mode parameter to faster than real
+ * time.
+ */
+#define AFE_PSEUDOPORT_TIMING_MODE_FTRT                             0x0
+
+/* Enumeration for setting the timing_mode parameter to real time using
+ * timers.
+ */
+#define AFE_PSEUDOPORT_TIMING_MODE_TIMER                            0x1
+
+/* Payload of the AFE_PARAM_ID_PSEUDO_PORT_CONFIG parameter used by
+    AFE_MODULE_AUDIO_DEV_INTERFACE.
+*/
+struct afe_param_id_pseudo_port_cfg {
+	u32                  pseud_port_cfg_minor_version;
+	/*
+	 * Minor version used for tracking the version of the pseudoport
+	 * configuration interface.
+	 */
+
+	u16                  bit_width;
+	/* Bit width of the sample at values 16, 24 */
+
+	u16                  num_channels;
+	/* Number of channels at values  1 to 8 */
+
+	u16                  data_format;
+	/* Non-linear data format supported by the pseudoport (for future use).
+	 * At values #AFE_LINEAR_PCM_DATA
+	 */
+
+	u16                  timing_mode;
+	/* Indicates whether the pseudoport synchronizes to the clock or
+	 * operates faster than real time.
+	 * at values
+	 * - #AFE_PSEUDOPORT_TIMING_MODE_FTRT
+	 * - #AFE_PSEUDOPORT_TIMING_MODE_TIMER @tablebulletend
+	 */
+
+	u32                  sample_rate;
+	/* Sample rate at which the pseudoport will run.
+	 * at values
+	 * - #AFE_PORT_SAMPLE_RATE_8K
+	 * - #AFE_PORT_SAMPLE_RATE_32K
+	 * - #AFE_PORT_SAMPLE_RATE_48K
+	 * - #AFE_PORT_SAMPLE_RATE_96K
+	 * - #AFE_PORT_SAMPLE_RATE_192K @tablebulletend
+	 */
+} __packed;
+
+
 union afe_port_config {
 	struct afe_param_id_pcm_cfg               pcm;
 	struct afe_param_id_i2s_cfg               i2s;
 	struct afe_param_id_hdmi_multi_chan_audio_cfg hdmi_multi_ch;
 	struct afe_param_id_slimbus_cfg           slim_sch;
 	struct afe_param_id_rt_proxy_port_cfg     rtproxy;
+	struct afe_param_id_internal_bt_fm_cfg    int_bt_fm;
+	struct afe_param_id_pseudo_port_cfg       pseudo_port;
+} __packed;
+
+struct afe_audioif_config_command_no_payload {
+	struct apr_hdr			hdr;
+	struct afe_port_cmd_set_param_v2 param;
 } __packed;
 
 struct afe_audioif_config_command {
@@ -6120,6 +6209,116 @@ struct asm_eq_params {
 
 /*	Band cut equalizer effect.*/
 #define ASM_PARAM_EQ_BAND_CUT       6
+
+/* Voice get & set params */
+#define VOICE_CMD_SET_PARAM				0x0001133D
+#define VOICE_CMD_GET_PARAM				0x0001133E
+#define VOICE_EVT_GET_PARAM_ACK				0x00011008
+
+
+/* SRS TRUMEDIA start */
+/* topology */
+#define SRS_TRUMEDIA_TOPOLOGY_ID			0x00010D90
+/* module */
+#define SRS_TRUMEDIA_MODULE_ID				0x10005010
+/* parameters */
+#define SRS_TRUMEDIA_PARAMS				0x10005011
+#define SRS_TRUMEDIA_PARAMS_WOWHD			0x10005012
+#define SRS_TRUMEDIA_PARAMS_CSHP			0x10005013
+#define SRS_TRUMEDIA_PARAMS_HPF				0x10005014
+#define SRS_TRUMEDIA_PARAMS_PEQ				0x10005015
+#define SRS_TRUMEDIA_PARAMS_HL				0x10005016
+
+#define SRS_ID_GLOBAL	0x00000001
+#define SRS_ID_WOWHD	0x00000002
+#define SRS_ID_CSHP	0x00000003
+#define SRS_ID_HPF	0x00000004
+#define SRS_ID_PEQ	0x00000005
+#define SRS_ID_HL	0x00000006
+
+#define SRS_CMD_UPLOAD		0x7FFF0000
+#define SRS_PARAM_INDEX_MASK	0x80000000
+#define SRS_PARAM_OFFSET_MASK	0x3FFF0000
+#define SRS_PARAM_VALUE_MASK	0x0000FFFF
+
+struct srs_trumedia_params_GLOBAL {
+	uint8_t                  v1;
+	uint8_t                  v2;
+	uint8_t                  v3;
+	uint8_t                  v4;
+	uint8_t                  v5;
+	uint8_t                  v6;
+	uint8_t                  v7;
+	uint8_t                  v8;
+} __packed;
+
+struct srs_trumedia_params_WOWHD {
+	uint32_t				v1;
+	uint16_t				v2;
+	uint16_t				v3;
+	uint16_t				v4;
+	uint16_t				v5;
+	uint16_t				v6;
+	uint16_t				v7;
+	uint16_t				v8;
+	uint16_t				v____A1;
+	uint32_t				v9;
+	uint16_t				v10;
+	uint16_t				v11;
+	uint32_t				v12[16];
+} __packed;
+
+struct srs_trumedia_params_CSHP {
+	uint32_t				v1;
+	uint16_t				v2;
+	uint16_t				v3;
+	uint16_t				v4;
+	uint16_t				v5;
+	uint16_t				v6;
+	uint16_t				v____A1;
+	uint32_t				v7;
+	uint16_t				v8;
+	uint16_t				v9;
+	uint32_t				v10[16];
+} __packed;
+
+struct srs_trumedia_params_HPF {
+	uint32_t				v1;
+	uint32_t				v2[26];
+} __packed;
+
+struct srs_trumedia_params_PEQ {
+	uint32_t				v1;
+	uint16_t				v2;
+	uint16_t				v3;
+	uint16_t				v4;
+	uint16_t				v____A1;
+	uint32_t				v5[26];
+	uint32_t				v6[26];
+} __packed;
+
+struct srs_trumedia_params_HL {
+	uint16_t				v1;
+	uint16_t				v2;
+	uint16_t				v3;
+	uint16_t				v____A1;
+	int32_t					v4;
+	uint32_t				v5;
+	uint16_t				v6;
+	uint16_t				v____A2;
+	uint32_t				v7;
+} __packed;
+
+struct srs_trumedia_params {
+	struct srs_trumedia_params_GLOBAL	global;
+	struct srs_trumedia_params_WOWHD	wowhd;
+	struct srs_trumedia_params_CSHP		cshp;
+	struct srs_trumedia_params_HPF		hpf;
+	struct srs_trumedia_params_PEQ		peq;
+	struct srs_trumedia_params_HL		hl;
+} __packed;
+/* SRS TruMedia end */
+
 
 
 /* ERROR CODES */

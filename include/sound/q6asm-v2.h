@@ -16,7 +16,7 @@
 #include <mach/msm_subsystem_map.h>
 #include <sound/apr_audio-v2.h>
 #include <linux/list.h>
-#include <linux/ion.h>
+#include <linux/msm_ion.h>
 
 #define IN                      0x000
 #define OUT                     0x001
@@ -66,6 +66,7 @@
 
 #define SYNC_IO_MODE	0x0001
 #define ASYNC_IO_MODE	0x0002
+#define COMPRESSED_IO	0x0040
 #define NT_MODE        0x0400
 
 
@@ -139,6 +140,7 @@ struct audio_client {
 	atomic_t	       cmd_state;
 	/* Relative or absolute TS */
 	uint32_t	       time_flag;
+	atomic_t	       nowait_cmd_cnt;
 	void		       *priv;
 	uint32_t               io_mode;
 	uint64_t	       time_stamp;

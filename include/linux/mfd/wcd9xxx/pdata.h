@@ -28,6 +28,12 @@
 #define SITAR_CFILT2_SEL 0x1
 #define SITAR_CFILT3_SEL 0x2
 
+#define WCD9XXX_LDOH_1P95_V 0x0
+#define WCD9XXX_LDOH_2P35_V 0x1
+#define WCD9XXX_LDOH_2P75_V 0x2
+#define WCD9XXX_LDOH_2P85_V 0x3
+#define WCD9XXX_LDOH_3P0_V 0x3
+
 #define TABLA_LDOH_1P95_V 0x0
 #define TABLA_LDOH_2P35_V 0x1
 #define TABLA_LDOH_2P75_V 0x2
@@ -36,16 +42,6 @@
 #define TABLA_CFILT1_SEL 0x0
 #define TABLA_CFILT2_SEL 0x1
 #define TABLA_CFILT3_SEL 0x2
-
-#define TAIKO_CFILT1_SEL 0x0
-#define TAIKO_CFILT2_SEL 0x1
-#define TAIKO_CFILT3_SEL 0x2
-
-#define TAIKO_LDOH_1P95_V 0x0
-#define TAIKO_LDOH_2P35_V 0x1
-#define TAIKO_LDOH_2P75_V 0x2
-#define TAIKO_LDOH_2P85_V 0x3
-
 
 #define MAX_AMIC_CHANNEL 7
 
@@ -125,7 +121,7 @@ struct wcd9xxx_ocp_setting {
 	unsigned int	hph_ocp_limit:3; /* Headphone OCP current limit */
 };
 
-#define MAX_REGULATOR	6
+#define MAX_REGULATOR	7
 /*
  *      format : TABLA_<POWER_SUPPLY_PIN_NAME>_CUR_MAX
  *
@@ -158,6 +154,7 @@ struct wcd9xxx_pdata {
 	struct wcd9xxx_micbias_setting micbias;
 	struct wcd9xxx_ocp_setting ocp;
 	struct wcd9xxx_regulator regulator[MAX_REGULATOR];
+	u32 mclk_rate;
 };
 
 #endif

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,7 +15,7 @@
 #include <mach/qdsp6v2/apr.h>
 #include <sound/apr_audio.h>
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
-#include <linux/ion.h>
+#include <linux/msm_ion.h>
 #endif
 
 #define IN                      0x000
@@ -49,10 +49,13 @@
 #define FORMAT_MAT	0x0017
 #define FORMAT_AAC	0x0018
 #define FORMAT_DTS_LBR 0x0019
+#define FORMAT_PASS_THROUGH 0x0020
+#define FORMAT_MP2          0x0021
 
 #define ENCDEC_SBCBITRATE   0x0001
 #define ENCDEC_IMMEDIATE_DECODE 0x0002
 #define ENCDEC_CFG_BLK          0x0003
+#define DTS_ENC_SAMPLE_RATE48k	48000
 
 #define CMD_PAUSE          0x0001
 #define CMD_FLUSH          0x0002
@@ -71,10 +74,12 @@
 /* Enable Sample_Rate/Channel_Mode notification event from Decoder */
 #define SR_CM_NOTIFY_ENABLE	0x0004
 
-#define ASYNC_IO_MODE	0x0002
-#define SYNC_IO_MODE	0x0001
-#define NO_TIMESTAMP    0xFF00
-#define SET_TIMESTAMP   0x0000
+#define TUN_WRITE_IO_MODE 0x0008 /* tunnel read write mode */
+#define TUN_READ_IO_MODE  0x0004 /* tunnel read write mode */
+#define ASYNC_IO_MODE	  0x0002
+#define SYNC_IO_MODE	  0x0001
+#define NO_TIMESTAMP      0xFF00
+#define SET_TIMESTAMP     0x0000
 
 #define SOFT_PAUSE_ENABLE	1
 #define SOFT_PAUSE_DISABLE	0
@@ -160,6 +165,7 @@ struct audio_client {
 	uint32_t         io_mode;
 	uint64_t         time_stamp;
 	atomic_t         cmd_response;
+	bool             perf_mode;
 };
 
 void q6asm_audio_client_free(struct audio_client *ac);
@@ -182,16 +188,25 @@ int q6asm_audio_client_buf_free_contiguous(unsigned int dir,
 			struct audio_client *ac);
 
 int q6asm_open_read(struct audio_client *ac, uint32_t format);
+int q6asm_open_read_v2_1(struct audio_client *ac, uint32_t format);
 
-int q6asm_open_read_compressed(struct audio_client *ac, uint32_t format);
+int q6asm_open_read_compressed(struct audio_client *ac,
+			 uint32_t frames_per_buffer, uint32_t meta_data_mode);
 
 int q6asm_open_write(struct audio_client *ac, uint32_t format);
 
 int q6asm_open_write_compressed(struct audio_client *ac, uint32_t format);
 
+int q6asm_open_transcode_loopback(struct audio_client *ac, uint32_t channels);
+
+int q6asm_enc_cfg_blk_dts(struct audio_client *ac,
+				uint32_t sample_rate, uint32_t channels);
+
 int q6asm_open_read_write(struct audio_client *ac,
 			uint32_t rd_format,
 			uint32_t wr_format);
+
+int q6asm_open_loopack(struct audio_client *ac);
 
 int q6asm_write(struct audio_client *ac, uint32_t len, uint32_t msw_ts,
 				uint32_t lsw_ts, uint32_t flags);
@@ -202,6 +217,9 @@ int q6asm_async_write(struct audio_client *ac,
 					  struct audio_aio_write_param *param);
 
 int q6asm_async_read(struct audio_client *ac,
+					  struct audio_aio_read_param *param);
+
+int q6asm_async_read_compressed(struct audio_client *ac,
 					  struct audio_aio_read_param *param);
 
 int q6asm_read(struct audio_client *ac);
@@ -277,10 +295,14 @@ int q6asm_media_format_block_pcm(struct audio_client *ac,
 			uint32_t rate, uint32_t channels);
 
 int q6asm_media_format_block_multi_ch_pcm(struct audio_client *ac,
-				uint32_t rate, uint32_t channels);
+				uint32_t rate, uint32_t channels,
+				char *channel_map);
 
 int q6asm_media_format_block_aac(struct audio_client *ac,
 			struct asm_aac_cfg *cfg);
+
+int q6asm_media_format_block_amrwbplus(struct audio_client *ac,
+					struct asm_amrwbplus_cfg *cfg);
 
 int q6asm_media_format_block_multi_aac(struct audio_client *ac,
 			struct asm_aac_cfg *cfg);
