@@ -44,6 +44,26 @@
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm9625")
 #define machine_is_msm9625()		\
 	of_machine_is_compatible("qcom,msm9625")
+#define early_machine_is_mpq8092()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,mpq8092")
+#define machine_is_mpq8092_sim()           \
+	of_machine_is_compatible("qcom,mpq8092-sim")
+#define early_machine_is_msm8226()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8226")
+#define machine_is_msm8226()		\
+	of_machine_is_compatible("qcom,msm8226")
+#define machine_is_msm8226_sim()		\
+	of_machine_is_compatible("qcom,msm8226-sim")
+#define machine_is_msm8226_rumi()		\
+	of_machine_is_compatible("qcom,msm8226-rumi")
+#define early_machine_is_msm8910()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8910")
+#define machine_is_msm8910()		\
+	of_machine_is_compatible("qcom,msm8910")
+#define machine_is_msm8910_sim()		\
+	of_machine_is_compatible("qcom,msm8910-sim")
+#define machine_is_msm8910_rumi()		\
+	of_machine_is_compatible("qcom,msm8910-rumi")
 #else
 #define early_machine_is_msm8974()	0
 #define machine_is_msm8974()		0
@@ -51,6 +71,17 @@
 #define machine_is_msm8974_rumi()	0
 #define early_machine_is_msm9625()	0
 #define machine_is_msm9625()		0
+#define early_machine_is_mpq8092()	0
+#define machine_is_mpq8092_sim()	0
+#define early_machine_is_msm8226()	0
+#define machine_is_msm8226()		0
+#define machine_is_msm8226_sim()	0
+#define machine_is_msm8226_rumi()	0
+#define early_machine_is_msm8910()	0
+#define machine_is_msm8910()		0
+#define machine_is_msm8910_sim()	0
+#define machine_is_msm8910_rumi()	0
+
 #endif
 
 #define PLATFORM_SUBTYPE_SGLTE	6
@@ -73,14 +104,20 @@ enum msm_cpu {
 	MSM_CPU_7X25AA,
 	MSM_CPU_7X25AB,
 	MSM_CPU_8064,
+	MSM_CPU_8064AB,
 	MSM_CPU_8930,
 	MSM_CPU_8930AA,
+	MSM_CPU_8930AB,
 	MSM_CPU_7X27AA,
 	MSM_CPU_9615,
 	MSM_CPU_8974,
 	MSM_CPU_8627,
 	MSM_CPU_8625,
-	MSM_CPU_9625
+	MSM_CPU_9625,
+	MSM_CPU_8092,
+	MSM_CPU_8226,
+	MSM_CPU_8910,
+	MSM_CPU_8625Q,
 };
 
 enum pmic_model {
@@ -110,10 +147,13 @@ uint32_t socinfo_get_platform_subtype(void);
 uint32_t socinfo_get_platform_version(void);
 enum pmic_model socinfo_get_pmic_model(void);
 uint32_t socinfo_get_pmic_die_revision(void);
-int __init socinfo_init(void) __must_check;
+struct device * __init socinfo_init(void) __must_check;
 const int read_msm_cpu_type(void);
 const int get_core_count(void);
+const int cpu_is_krait(void);
 const int cpu_is_krait_v1(void);
+const int cpu_is_krait_v2(void);
+const int cpu_is_krait_v3(void);
 
 static inline int cpu_is_msm7x01(void)
 {
@@ -283,6 +323,15 @@ static inline int cpu_is_apq8064(void)
 #endif
 }
 
+static inline int cpu_is_apq8064ab(void)
+{
+#ifdef CONFIG_ARCH_APQ8064
+	return read_msm_cpu_type() == MSM_CPU_8064AB;
+#else
+	return 0;
+#endif
+}
+
 static inline int cpu_is_msm8930(void)
 {
 #ifdef CONFIG_ARCH_MSM8930
@@ -296,6 +345,15 @@ static inline int cpu_is_msm8930aa(void)
 {
 #ifdef CONFIG_ARCH_MSM8930
 	return read_msm_cpu_type() == MSM_CPU_8930AA;
+#else
+	return 0;
+#endif
+}
+
+static inline int cpu_is_msm8930ab(void)
+{
+#ifdef CONFIG_ARCH_MSM8930
+	return read_msm_cpu_type() == MSM_CPU_8930AB;
 #else
 	return 0;
 #endif
@@ -345,6 +403,83 @@ static inline int cpu_is_msm8625(void)
 #else
 	return 0;
 #endif
+}
+
+static inline int cpu_is_msm8974(void)
+{
+#ifdef CONFIG_ARCH_MSM8974
+	enum msm_cpu cpu = socinfo_get_msm_cpu();
+
+	BUG_ON(cpu == MSM_CPU_UNKNOWN);
+	return cpu == MSM_CPU_8974;
+#else
+	return 0;
+#endif
+}
+
+static inline int cpu_is_mpq8092(void)
+{
+#ifdef CONFIG_ARCH_MPQ8092
+	enum msm_cpu cpu = socinfo_get_msm_cpu();
+
+	BUG_ON(cpu == MSM_CPU_UNKNOWN);
+	return cpu == MSM_CPU_8092;
+#else
+	return 0;
+#endif
+
+}
+
+static inline int cpu_is_msm8226(void)
+{
+#ifdef CONFIG_ARCH_MSM8226
+	enum msm_cpu cpu = socinfo_get_msm_cpu();
+
+	BUG_ON(cpu == MSM_CPU_UNKNOWN);
+	return cpu == MSM_CPU_8226;
+#else
+	return 0;
+#endif
+}
+
+static inline int cpu_is_msm8910(void)
+{
+#ifdef CONFIG_ARCH_MSM8910
+	enum msm_cpu cpu = socinfo_get_msm_cpu();
+
+	BUG_ON(cpu == MSM_CPU_UNKNOWN);
+	return cpu == MSM_CPU_8910;
+#else
+	return 0;
+#endif
+}
+
+static inline int cpu_is_msm8625q(void)
+{
+#ifdef CONFIG_ARCH_MSM8625
+	enum msm_cpu cpu = socinfo_get_msm_cpu();
+
+	BUG_ON(cpu == MSM_CPU_UNKNOWN);
+	return cpu == MSM_CPU_8625Q;
+#else
+	return 0;
+#endif
+}
+
+static inline int soc_class_is_msm8960(void)
+{
+	return cpu_is_msm8960() || cpu_is_msm8960ab();
+}
+
+static inline int soc_class_is_apq8064(void)
+{
+	return cpu_is_apq8064() || cpu_is_apq8064ab();
+}
+
+static inline int soc_class_is_msm8930(void)
+{
+	return cpu_is_msm8930() || cpu_is_msm8930aa() || cpu_is_msm8930ab() ||
+	       cpu_is_msm8627();
 }
 
 #endif
