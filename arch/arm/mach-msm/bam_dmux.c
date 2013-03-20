@@ -27,6 +27,7 @@
 #include <linux/clk.h>
 #include <linux/wakelock.h>
 #include <linux/kfifo.h>
+#include <linux/of.h>
 
 #include <mach/sps.h>
 #include <mach/bam_dmux.h>
@@ -170,11 +171,18 @@ struct rx_pkt_info {
 
 #define A2_NUM_PIPES		6
 #define A2_SUMMING_THRESHOLD	4096
-#define A2_DEFAULT_DESCRIPTORS	32
 #define A2_PHYS_BASE		0x124C2000
 #define A2_PHYS_SIZE		0x2000
 #define BUFFER_SIZE		2048
 #define NUM_BUFFERS		32
+
+#ifndef A2_BAM_IRQ
+#define A2_BAM_IRQ -1
+#endif
+
+static void *a2_phys_base;
+static uint32_t a2_phys_size;
+static int a2_bam_irq;
 static struct sps_bam_props a2_props;
 static u32 a2_device_handle;
 static struct sps_pipe *bam_tx_pipe;
@@ -185,6 +193,7 @@ static struct sps_mem_buffer tx_desc_mem_buf;
 static struct sps_mem_buffer rx_desc_mem_buf;
 static struct sps_register_event tx_register_event;
 static struct sps_register_event rx_register_event;
+static bool satellite_mode;
 
 static struct bam_ch_info bam_ch[BAM_DMUX_NUM_CHANNELS];
 static int bam_mux_initialized;
@@ -214,6 +223,7 @@ static void handle_bam_mux_cmd(struct work_struct *work);
 static void rx_timer_work_func(struct work_struct *work);
 
 static DECLARE_WORK(rx_timer_work, rx_timer_work_func);
+static struct delayed_work queue_rx_work;
 
 static struct workqueue_struct *bam_mux_rx_workqueue;
 static struct workqueue_struct *bam_mux_tx_workqueue;
@@ -259,6 +269,8 @@ static DEFINE_MUTEX(smsm_cb_lock);
 static DEFINE_MUTEX(delayed_ul_vote_lock);
 static int need_delayed_ul_vote;
 static int power_management_only_mode;
+static int in_ssr;
+static int ssr_skipped_disconnect;
 
 struct outside_notify_func {
 	void (*notify)(void *, int, unsigned long);
@@ -421,21 +433,27 @@ static void queue_rx(void)
 	rx_len_cached = bam_rx_pool_len;
 	mutex_unlock(&bam_rx_pool_mutexlock);
 
-	while (rx_len_cached < NUM_BUFFERS) {
+	while (bam_connection_is_active && rx_len_cached < NUM_BUFFERS) {
 		if (in_global_reset)
 			goto fail;
 
-		info = kmalloc(sizeof(struct rx_pkt_info), GFP_KERNEL);
+		info = kmalloc(sizeof(struct rx_pkt_info),
+						GFP_NOWAIT | __GFP_NOWARN);
 		if (!info) {
-			pr_err("%s: unable to alloc rx_pkt_info\n", __func__);
+			DMUX_LOG_KERR(
+			"%s: unable to alloc rx_pkt_info, will retry later\n",
+								__func__);
 			goto fail;
 		}
 
 		INIT_WORK(&info->work, handle_bam_mux_cmd);
 
-		info->skb = __dev_alloc_skb(BUFFER_SIZE, GFP_KERNEL);
+		info->skb = __dev_alloc_skb(BUFFER_SIZE,
+						GFP_NOWAIT | __GFP_NOWARN);
 		if (info->skb == NULL) {
-			DMUX_LOG_KERR("%s: unable to alloc skb\n", __func__);
+			DMUX_LOG_KERR(
+				"%s: unable to alloc skb, will retry later\n",
+								__func__);
 			goto fail_info;
 		}
 		ptr = skb_put(info->skb, BUFFER_SIZE);
@@ -478,10 +496,15 @@ fail_info:
 	kfree(info);
 
 fail:
-	if (rx_len_cached == 0) {
-		DMUX_LOG_KERR("%s: RX queue failure\n", __func__);
-		in_global_reset = 1;
+	if (rx_len_cached == 0 && !in_global_reset) {
+		DMUX_LOG_KERR("%s: rescheduling\n", __func__);
+		schedule_delayed_work(&queue_rx_work, msecs_to_jiffies(100));
 	}
+}
+
+static void queue_rx_work_func(struct work_struct *work)
+{
+	queue_rx();
 }
 
 static void bam_mux_process_data(struct sk_buff *rx_skb)
@@ -1702,6 +1725,20 @@ static void ul_wakeup(void)
 	}
 
 	/*
+	 * if this gets hit, that means restart_notifier_cb() has started
+	 * but probably not finished, thus we know SSR has happened, but
+	 * haven't been able to send that info to our clients yet.
+	 * in that case, abort the ul_wakeup() so that we don't undo any
+	 * work restart_notifier_cb() has done.  The clients will be notified
+	 * shortly.  No cleanup necessary (reschedule the wakeup) as our and
+	 * their SSR handling will cover it
+	 */
+	if (unlikely(in_global_reset == 1)) {
+		mutex_unlock(&wakeup_lock);
+		return;
+	}
+
+	/*
 	 * if someone is voting for UL before bam is inited (modem up first
 	 * time), set flag for init to kickoff ul wakeup once bam is inited
 	 */
@@ -1784,8 +1821,17 @@ static void reconnect_to_bam(void)
 	int i;
 
 	in_global_reset = 0;
+	in_ssr = 0;
 	vote_dfab();
 	if (!power_management_only_mode) {
+		if (ssr_skipped_disconnect) {
+			/* delayed to here to prevent bus stall */
+			sps_disconnect(bam_tx_pipe);
+			sps_disconnect(bam_rx_pipe);
+			__memzero(rx_desc_mem_buf.base, rx_desc_mem_buf.size);
+			__memzero(tx_desc_mem_buf.base, tx_desc_mem_buf.size);
+		}
+		ssr_skipped_disconnect = 0;
 		i = sps_device_reset(a2_device_handle);
 		if (i)
 			pr_err("%s: device reset failed rc = %d\n", __func__,
@@ -1838,11 +1884,18 @@ static void disconnect_to_bam(void)
 
 	/* tear down BAM connection */
 	INIT_COMPLETION(bam_connection_completion);
+
+	/* in_ssr documentation/assumptions found in restart_notifier_cb */
 	if (!power_management_only_mode) {
-		sps_disconnect(bam_tx_pipe);
-		sps_disconnect(bam_rx_pipe);
-		__memzero(rx_desc_mem_buf.base, rx_desc_mem_buf.size);
-		__memzero(tx_desc_mem_buf.base, tx_desc_mem_buf.size);
+		if (likely(!in_ssr)) {
+			sps_disconnect(bam_tx_pipe);
+			sps_disconnect(bam_rx_pipe);
+			__memzero(rx_desc_mem_buf.base, rx_desc_mem_buf.size);
+			__memzero(tx_desc_mem_buf.base, tx_desc_mem_buf.size);
+			sps_device_reset(a2_device_handle);
+		} else {
+			ssr_skipped_disconnect = 1;
+		}
 	}
 	unvote_dfab();
 
@@ -1876,12 +1929,18 @@ static void vote_dfab(void)
 		mutex_unlock(&dfab_status_lock);
 		return;
 	}
-	rc = clk_prepare_enable(dfab_clk);
-	if (rc)
-		DMUX_LOG_KERR("bam_dmux vote for dfab failed rc = %d\n", rc);
-	rc = clk_prepare_enable(xo_clk);
-	if (rc)
-		DMUX_LOG_KERR("bam_dmux vote for xo failed rc = %d\n", rc);
+	if (dfab_clk) {
+		rc = clk_prepare_enable(dfab_clk);
+		if (rc)
+			DMUX_LOG_KERR("bam_dmux vote for dfab failed rc = %d\n",
+									rc);
+	}
+	if (xo_clk) {
+		rc = clk_prepare_enable(xo_clk);
+		if (rc)
+			DMUX_LOG_KERR("bam_dmux vote for xo failed rc = %d\n",
+									rc);
+	}
 	dfab_is_on = 1;
 	mutex_unlock(&dfab_status_lock);
 }
@@ -1896,8 +1955,10 @@ static void unvote_dfab(void)
 		mutex_unlock(&dfab_status_lock);
 		return;
 	}
-	clk_disable_unprepare(dfab_clk);
-	clk_disable_unprepare(xo_clk);
+	if (dfab_clk)
+		clk_disable_unprepare(dfab_clk);
+	if (xo_clk)
+		clk_disable_unprepare(xo_clk);
 	dfab_is_on = 0;
 	mutex_unlock(&dfab_status_lock);
 }
@@ -1945,6 +2006,21 @@ static int restart_notifier_cb(struct notifier_block *this,
 	int temp_remote_status;
 	unsigned long flags;
 
+	/*
+	 * Bam_dmux counts on the fact that the BEFORE_SHUTDOWN level of
+	 * notifications are guarenteed to execute before the AFTER_SHUTDOWN
+	 * level of notifications, and that BEFORE_SHUTDOWN always occurs in
+	 * all SSR events, no matter what triggered the SSR.  Also, bam_dmux
+	 * assumes that SMD does its SSR processing in the AFTER_SHUTDOWN level
+	 * thus bam_dmux is guarenteed to detect SSR before SMD, since the
+	 * callbacks for all the drivers within the AFTER_SHUTDOWN level could
+	 * occur in any order.  Bam_dmux uses this knowledge to skip accessing
+	 * the bam hardware when disconnect_to_bam() is triggered by SMD's SSR
+	 * processing.  We do not wat to access the bam hardware during SSR
+	 * because a watchdog crash from a bus stall would likely occur.
+	 */
+	if (code == SUBSYS_BEFORE_SHUTDOWN)
+		in_ssr = 1;
 	if (code != SUBSYS_AFTER_SHUTDOWN)
 		return NOTIFY_DONE;
 
@@ -2020,20 +2096,21 @@ static int bam_init(void)
 
 	vote_dfab();
 	/* init BAM */
-	a2_virt_addr = ioremap_nocache(A2_PHYS_BASE, A2_PHYS_SIZE);
+	a2_virt_addr = ioremap_nocache((unsigned long)(a2_phys_base),
+							a2_phys_size);
 	if (!a2_virt_addr) {
 		pr_err("%s: ioremap failed\n", __func__);
 		ret = -ENOMEM;
 		goto ioremap_failed;
 	}
-	a2_props.phys_addr = A2_PHYS_BASE;
+	a2_props.phys_addr = (u32)(a2_phys_base);
 	a2_props.virt_addr = a2_virt_addr;
-	a2_props.virt_size = A2_PHYS_SIZE;
-	a2_props.irq = A2_BAM_IRQ;
+	a2_props.virt_size = a2_phys_size;
+	a2_props.irq = a2_bam_irq;
 	a2_props.options = SPS_BAM_OPT_IRQ_WAKEUP;
 	a2_props.num_pipes = A2_NUM_PIPES;
 	a2_props.summing_threshold = A2_SUMMING_THRESHOLD;
-	if (cpu_is_msm9615())
+	if (cpu_is_msm9615() || satellite_mode)
 		a2_props.manage = SPS_BAM_MGR_DEVICE_REMOTE;
 	/* need to free on tear down */
 	ret = sps_register_bam_device(&a2_props, &h);
@@ -2191,20 +2268,21 @@ static int bam_init_fallback(void)
 	void *a2_virt_addr;
 
 	/* init BAM */
-	a2_virt_addr = ioremap_nocache(A2_PHYS_BASE, A2_PHYS_SIZE);
+	a2_virt_addr = ioremap_nocache((unsigned long)(a2_phys_base),
+							a2_phys_size);
 	if (!a2_virt_addr) {
 		pr_err("%s: ioremap failed\n", __func__);
 		ret = -ENOMEM;
 		goto ioremap_failed;
 	}
-	a2_props.phys_addr = A2_PHYS_BASE;
+	a2_props.phys_addr = (u32)(a2_phys_base);
 	a2_props.virt_addr = a2_virt_addr;
-	a2_props.virt_size = A2_PHYS_SIZE;
-	a2_props.irq = A2_BAM_IRQ;
+	a2_props.virt_size = a2_phys_size;
+	a2_props.irq = a2_bam_irq;
 	a2_props.options = SPS_BAM_OPT_IRQ_WAKEUP;
 	a2_props.num_pipes = A2_NUM_PIPES;
 	a2_props.summing_threshold = A2_SUMMING_THRESHOLD;
-	if (cpu_is_msm9615())
+	if (cpu_is_msm9615() || satellite_mode)
 		a2_props.manage = SPS_BAM_MGR_DEVICE_REMOTE;
 	ret = sps_register_bam_device(&a2_props, &h);
 	if (ret < 0) {
@@ -2313,25 +2391,53 @@ static void bam_dmux_smsm_ack_cb(void *priv, uint32_t old_state,
 static int bam_dmux_probe(struct platform_device *pdev)
 {
 	int rc;
+	struct resource *r;
 
 	DBG("%s probe called\n", __func__);
 	if (bam_mux_initialized)
 		return 0;
 
+	if (pdev->dev.of_node) {
+		r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		if (!r) {
+			pr_err("%s: reg field missing\n", __func__);
+			return -ENODEV;
+		}
+		a2_phys_base = (void *)(r->start);
+		a2_phys_size = (uint32_t)(resource_size(r));
+		a2_bam_irq = platform_get_irq(pdev, 0);
+		if (a2_bam_irq == -ENXIO) {
+			pr_err("%s: irq field missing\n", __func__);
+			return -ENODEV;
+		}
+		satellite_mode = of_property_read_bool(pdev->dev.of_node,
+						"qcom,satellite-mode");
+
+		DBG("%s: base:%p size:%x irq:%d satellite:%d\n", __func__,
+							a2_phys_base,
+							a2_phys_size,
+							a2_bam_irq,
+							satellite_mode);
+	} else { /* fallback to default init data */
+		a2_phys_base = (void *)(A2_PHYS_BASE);
+		a2_phys_size = A2_PHYS_SIZE;
+		a2_bam_irq = A2_BAM_IRQ;
+	}
+
 	xo_clk = clk_get(&pdev->dev, "xo");
 	if (IS_ERR(xo_clk)) {
-		pr_err("%s: did not get xo clock\n", __func__);
-		return PTR_ERR(xo_clk);
+		bam_dmux_log("%s: did not get xo clock\n", __func__);
+		xo_clk = NULL;
 	}
 	dfab_clk = clk_get(&pdev->dev, "bus_clk");
 	if (IS_ERR(dfab_clk)) {
-		pr_err("%s: did not get dfab clock\n", __func__);
-		return -EFAULT;
+		bam_dmux_log("%s: did not get dfab clock\n", __func__);
+		dfab_clk = NULL;
+	} else {
+		rc = clk_set_rate(dfab_clk, 64000000);
+		if (rc)
+			pr_err("%s: unable to set dfab clock rate\n", __func__);
 	}
-
-	rc = clk_set_rate(dfab_clk, 64000000);
-	if (rc)
-		pr_err("%s: unable to set dfab clock rate\n", __func__);
 
 	/*
 	 * setup the workqueue so that it can be pinned to core 0 and not
@@ -2367,6 +2473,7 @@ static int bam_dmux_probe(struct platform_device *pdev)
 	init_completion(&bam_connection_completion);
 	init_completion(&dfab_unvote_completion);
 	INIT_DELAYED_WORK(&ul_timeout_work, ul_timeout);
+	INIT_DELAYED_WORK(&queue_rx_work, queue_rx_work_func);
 	wake_lock_init(&bam_wakelock, WAKE_LOCK_SUSPEND, "bam_dmux_wakelock");
 
 	rc = smsm_state_cb_register(SMSM_MODEM_STATE, SMSM_A2_POWER_CONTROL,
@@ -2401,11 +2508,17 @@ static int bam_dmux_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static struct of_device_id msm_match_table[] = {
+	{.compatible = "qcom,bam_dmux"},
+	{},
+};
+
 static struct platform_driver bam_dmux_driver = {
 	.probe		= bam_dmux_probe,
 	.driver		= {
 		.name	= "BAM_RMNT",
 		.owner	= THIS_MODULE,
+		.of_match_table = msm_match_table,
 	},
 };
 

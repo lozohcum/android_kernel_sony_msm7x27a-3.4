@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,6 +14,8 @@
 #define _ARCH_IOMMU_DOMAINS_H
 
 #include <linux/memory_alloc.h>
+
+#define MSM_IOMMU_DOMAIN_SECURE	0x1
 
 enum {
 	VIDEO_DOMAIN,
@@ -69,11 +71,13 @@ struct msm_iova_layout {
 	int npartitions;
 	const char *client_name;
 	unsigned int domain_flags;
+	unsigned int is_secure;
 };
 
 #if defined(CONFIG_MSM_IOMMU)
 
 extern struct iommu_domain *msm_get_iommu_domain(int domain_num);
+extern int msm_find_domain_no(const struct iommu_domain *domain);
 
 extern int msm_allocate_iova_address(unsigned int iommu_domain,
 					unsigned int partition_no,
@@ -120,6 +124,10 @@ static inline struct iommu_domain
 	*msm_get_iommu_domain(int subsys_id) { return NULL; }
 
 
+static inline int msm_find_domain_no(const struct iommu_domain *domain)
+{
+	return -EINVAL;
+}
 
 static inline int msm_allocate_iova_address(unsigned int iommu_domain,
 					unsigned int partition_no,

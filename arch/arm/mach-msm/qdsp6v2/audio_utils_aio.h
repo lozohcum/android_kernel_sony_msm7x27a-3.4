@@ -1,6 +1,6 @@
 /* Copyright (C) 2008 Google, Inc.
  * Copyright (C) 2008 HTC Corporation
- * Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2012, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -24,7 +24,7 @@
 #include <linux/debugfs.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include <linux/ion.h>
+#include <linux/msm_ion.h>
 #include <asm/ioctls.h>
 #include <asm/atomic.h>
 #include "q6audio_common.h"
@@ -36,6 +36,7 @@
 #define ADRV_STATUS_FSYNC 0x00000008
 #define ADRV_STATUS_PAUSE 0x00000010
 #define AUDIO_DEC_EOS_SET  0x00000001
+#define AUDIO_DEC_EOF_SET  0x00000010
 #define AUDIO_EVENT_NUM		10
 
 #define __CONTAINS(r, v, l) ({                                  \
@@ -175,7 +176,8 @@ struct q6audio_aio {
 	struct ion_client *client;
 	struct audio_aio_drv_operations drv_ops;
 	union msm_audio_event_payload eos_write_payload;
-
+	uint32_t device_events;
+	uint16_t volume;
 	uint32_t drv_status;
 	int event_abort;
 	int eos_rsp;
